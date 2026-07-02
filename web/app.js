@@ -23,8 +23,8 @@
   let builderIdSession = '';
   let builderIdPollTimer = null;
   let iamSession = '';
-  let ms365Session = '';
-  let ms365PollTimer = null;
+  let kiroSsoSession = '';
+  let kiroSsoPollTimer = null;
   let exportSelectedIds = new Set();
   let currentVersion = '';
   let testLogs = [];
@@ -2064,7 +2064,7 @@
     local: 'fa-solid fa-folder-open',
     credentials: 'fa-solid fa-code',
     cookie: 'fa-solid fa-cookie-bite',
-    ms365: 'fa-brands fa-microsoft'
+    enterprisesso: 'fa-brands fa-microsoft'
   };
   function methodCard(type, title, desc) {
     var icon = METHOD_ICONS[type] || 'fa-solid fa-circle-plus';
@@ -2088,15 +2088,21 @@
     else if (type === 'local') modalLocal(title, body);
     else if (type === 'credentials') modalCredentials(title, body);
     else if (type === 'cookie') modalCookie(title, body);
-    else if (type === 'ms365') modalMs365(title, body);
+    else if (type === 'enterprisesso') modalEnterpriseSso(title, body);
     if (!modal.classList.contains('active')) openDialog('addModal');
     enhanceCustomSelects(body);
   }
   function closeModal() {
     closeDialog('addModal');
     iamSession = '';
-    ms365Session = '';
-    if (ms365PollTimer) { clearTimeout(ms365PollTimer); ms365PollTimer = null; }
+    if (kiroSsoPollTimer) { clearTimeout(kiroSsoPollTimer); kiroSsoPollTimer = null; }
+    // Best-effort cancel to free the loopback callback port immediately if the
+    // operator closes the modal mid-login. If polling already completed, the
+    // poller clears kiroSsoSession first, so this no-ops then.
+    if (kiroSsoSession) {
+      api('/auth/kiro-sso/cancel', { method: 'POST', body: JSON.stringify({ sessionId: kiroSsoSession }) }).catch(() => {});
+    }
+    kiroSsoSession = '';
     if (builderIdPollTimer) { clearTimeout(builderIdPollTimer); builderIdPollTimer = null; }
     builderIdSession = '';
   }
@@ -2110,7 +2116,7 @@
       methodCard('local', t('modal.localTitle'), t('modal.localDesc')) +
       methodCard('credentials', t('modal.credentialsTitle'), t('modal.credentialsDesc')) +
       methodCard('cookie', t('modal.cookieTitle'), t('modal.cookieDesc')) +
-      methodCard('ms365', t('modal.ms365Title'), t('modal.ms365Desc')) +
+      methodCard('enterprisesso', t('modal.enterpriseSsoTitle'), t('modal.enterpriseSsoDesc')) +
       '</div>' +
       '<div class="modal-footer"><button class="btn btn-secondary" data-close-add="1" type="button">' + escapeHtml(t('common.cancel')) + '</button></div>';
   }
@@ -2162,35 +2168,79 @@
       '</div>';
     $('iamBtn').addEventListener('click', startIamSso);
   }
-  function modalMs365(title, body) {
-    title.textContent = t('modal.ms365Title');
+  function modalEnterpriseSso(title, body) {
+    title.textContent = t('modal.enterpriseSsoTitle');
     body.innerHTML =
-      '<p class="help-block">' + escapeHtml(t('modal.ms365Desc')) + '</p>' +
-      '<div id="ms365Step2" class="hidden">' +
-      '<div class="form-group"><label>' + escapeHtml(t('ms365.loginUrl')) + '</label>' +
-      '<div class="endpoint"><span id="ms365AuthUrl" class="font-mono text-xs"></span></div>' +
-      '<div class="flex gap-2 mt-2">' +
-      '<button class="btn btn-sm btn-outline flex-1" id="ms365OpenBtn" type="button">' + escapeHtml(t('builderid.open')) + '</button>' +
-      '<button class="btn btn-sm btn-outline flex-1" id="ms365CopyBtn" type="button">' + escapeHtml(t('common.copy')) + '</button>' +
-      '</div>' +
-      '</div>' +
-      '<p class="text-sm mt-3 success-text">' + escapeHtml(t('ms365.completeLogin')) + '</p>' +
-      '<div class="form-group"><label>' + escapeHtml(t('ms365.tokenJson')) + '</label><textarea id="ms365Token" class="font-mono" placeholder=\'{"accessToken":"...","refreshToken":"...","tokenEndpoint":"...","clientId":"...","scopes":"..."}\'></textarea></div>' +
+      '<p class="help-block">' + escapeHtml(t('modal.enterpriseSsoDesc')) + '</p>' +
+      '<div id="kiroSsoStep1">' +
+      '<div class="message message-info"><p class="text-xs">' + escapeHtml(t('kirosso.hostNote')) + '</p></div>' +
       '<div class="modal-footer">' +
-      '<button class="btn btn-primary" id="ms365CompleteBtn" type="button">' + escapeHtml(t('ms365.complete')) + '</button>' +
-      '</div>' +
-      '</div>' +
-      '<div class="modal-footer" id="ms365Step1Footer">' +
       '<button class="btn btn-secondary" data-modal-goto="add" type="button">' + escapeHtml(t('common.back')) + '</button>' +
-      '<button class="btn btn-primary" id="ms365StartBtn" type="button">' + escapeHtml(t('ms365.startLogin')) + '</button>' +
+      '<button class="btn btn-primary" id="startKiroSsoBtn" type="button">' + escapeHtml(t('builderid.startLogin')) + '</button>' +
+      '</div>' +
+      '</div>' +
+      '<div id="kiroSsoStep2" class="hidden">' +
+      '<div class="message message-info"><p class="text-xs">' + escapeHtml(t('kirosso.openInstruction')) + '</p></div>' +
+      '<div class="form-group mt-3"><label>' + escapeHtml(t('iam.loginUrl')) + '</label>' +
+      '<div class="endpoint"><span id="kiroSsoSignInUrl" class="font-mono text-xs"></span></div>' +
+      '<div class="flex gap-2 mt-2">' +
+      '<button class="btn btn-sm btn-outline flex-1" id="kiroSsoOpenBtn" type="button">' + escapeHtml(t('builderid.open')) + '</button>' +
+      '<button class="btn btn-sm btn-outline flex-1" id="kiroSsoCopyBtn" type="button">' + escapeHtml(t('common.copy')) + '</button>' +
+      '</div>' +
+      '</div>' +
+      '<p id="kiroSsoStatus" class="text-center text-sm mt-4 muted-text">' + escapeHtml(t('builderid.waiting')) + '</p>' +
+      '<div class="modal-footer"><button class="btn btn-secondary" id="kiroSsoCancelBtn" type="button">' + escapeHtml(t('common.cancel')) + '</button></div>' +
       '</div>';
-    $('ms365StartBtn').addEventListener('click', () => startMs365Login());
-    $('ms365CompleteBtn').addEventListener('click', () => completeMs365Login());
-    $('ms365OpenBtn').addEventListener('click', () => window.open($('ms365AuthUrl').textContent, '_blank'));
-    $('ms365CopyBtn').addEventListener('click', async () => {
-      await copyText($('ms365AuthUrl').textContent);
-      toast(t('common.copied'), 'primary');
-    });
+    $('startKiroSsoBtn').addEventListener('click', startKiroSsoLogin);
+  }
+  async function startKiroSsoLogin() {
+    const res = await api('/auth/kiro-sso/start', { method: 'POST', body: JSON.stringify({}) });
+    const d = await res.json();
+    if (d.sessionId && d.signInUrl) {
+      kiroSsoSession = d.sessionId;
+      $('kiroSsoSignInUrl').textContent = d.signInUrl;
+      $('kiroSsoStep1').classList.add('hidden');
+      $('kiroSsoStep2').classList.remove('hidden');
+      $('kiroSsoOpenBtn').addEventListener('click', () => window.open($('kiroSsoSignInUrl').textContent, '_blank'));
+      $('kiroSsoCopyBtn').addEventListener('click', async () => {
+        await copyText($('kiroSsoSignInUrl').textContent);
+        toast(t('common.copied'), 'primary');
+      });
+      $('kiroSsoCancelBtn').addEventListener('click', cancelKiroSsoLogin);
+      // Open the sign-in tab immediately (works when the admin panel is viewed on the proxy host).
+      window.open(d.signInUrl, '_blank');
+      pollKiroSso(d.interval || 2);
+    } else toastError(t('common.failed') + ': ' + (d.error || ''));
+  }
+  function pollKiroSso(interval) {
+    kiroSsoPollTimer = setTimeout(async () => {
+      const res = await api('/auth/kiro-sso/poll', { method: 'POST', body: JSON.stringify({ sessionId: kiroSsoSession }) });
+      const d = await res.json();
+      if (d.completed) {
+        // Session is already consumed server-side; clear it so closeModal() does
+        // not fire a redundant cancel for an account that succeeded.
+        kiroSsoSession = '';
+        closeModal(); loadAccounts(); loadStats();
+        toastPrimary(t('builderid.success') + ': ' + (d.account?.email || d.account?.id));
+        autoRefreshNewAccount(d.account?.id);
+      } else if (d.success && !d.completed) {
+        $('kiroSsoStatus').textContent = t('builderid.waiting');
+        pollKiroSso(interval);
+      } else {
+        toastError(t('common.failed') + ': ' + (d.error || ''));
+        cancelKiroSsoLogin();
+      }
+    }, interval * 1000);
+  }
+  function cancelKiroSsoLogin() {
+    if (kiroSsoPollTimer) { clearTimeout(kiroSsoPollTimer); kiroSsoPollTimer = null; }
+    // Tell the backend to release the loopback callback port now instead of waiting
+    // for the deadline (fire-and-forget; ignore the result).
+    if (kiroSsoSession) {
+      api('/auth/kiro-sso/cancel', { method: 'POST', body: JSON.stringify({ sessionId: kiroSsoSession }) }).catch(() => {});
+    }
+    kiroSsoSession = '';
+    showModal('add');
   }
   function modalSso(title, body) {
     title.textContent = t('modal.ssoTitle');
@@ -2537,49 +2587,6 @@
         });
       } else toastError(t('common.failed') + ': ' + (d.error || ''));
     }
-  }
-  async function startMs365Login() {
-    const res = await api('/auth/ms365/start', { method: 'POST', body: JSON.stringify({}) });
-    const d = await res.json();
-    if (d.authorizeUrl) {
-      ms365Session = d.sessionId;
-      $('ms365AuthUrl').textContent = d.authorizeUrl;
-      $('ms365Step2').classList.remove('hidden');
-      const footer = $('ms365Step1Footer');
-      if (footer) footer.classList.add('hidden');
-      window.open(d.authorizeUrl, '_blank');
-      pollMs365Login();
-    } else toastError(t('common.failed') + ': ' + (d.error || ''));
-  }
-  async function pollMs365Login() {
-    if (!ms365Session) return;
-    try {
-      const res = await api('/auth/ms365/poll', { method: 'POST', body: JSON.stringify({ sessionId: ms365Session }) });
-      const d = await res.json();
-      if (d.completed) {
-        closeModal(); loadAccounts(); loadStats();
-        toastPrimary(t('ms365.success') + ': ' + (d.account?.email || d.account?.id));
-        autoRefreshNewAccount(d.account?.id);
-        return;
-      }
-      if (d.success === false || d.error) { toastError(d.error || t('common.failed')); return; }
-      ms365PollTimer = setTimeout(pollMs365Login, 2000);
-    } catch (e) {
-      ms365PollTimer = setTimeout(pollMs365Login, 2000);
-    }
-  }
-  async function completeMs365Login() {
-    const res = await api('/auth/ms365/complete', {
-      method: 'POST', body: JSON.stringify({
-        sessionId: ms365Session, callback: $('ms365Token').value.trim()
-      })
-    });
-    const d = await res.json();
-    if (d.success) {
-      closeModal(); loadAccounts(); loadStats();
-      toastPrimary(t('ms365.success') + ': ' + (d.account?.email || d.account?.id));
-      autoRefreshNewAccount(d.account?.id);
-    } else toastError(d.error || t('common.failed'));
   }
   async function autoRefreshNewAccount(id) {
     if (!id) return;

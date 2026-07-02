@@ -2207,14 +2207,12 @@ func (h *Handler) handleAdminAPI(w http.ResponseWriter, r *http.Request) {
 		h.apiStartIamSso(w, r)
 	case path == "/auth/iam-sso/complete" && r.Method == "POST":
 		h.apiCompleteIamSso(w, r)
-	case path == "/auth/ms365/start" && r.Method == "POST":
-		h.apiStartMs365(w, r)
-	case path == "/auth/ms365/complete" && r.Method == "POST":
-		h.apiCompleteMs365(w, r)
-	case path == "/auth/ms365/poll" && r.Method == "POST":
-		h.apiPollMs365(w, r)
-	case path == "/auth/ms365/poll" && r.Method == "POST":
-		h.apiPollMs365(w, r)
+	case path == "/auth/kiro-sso/start" && r.Method == "POST":
+		h.apiStartKiroSso(w, r)
+	case path == "/auth/kiro-sso/poll" && r.Method == "POST":
+		h.apiPollKiroSso(w, r)
+	case path == "/auth/kiro-sso/cancel" && r.Method == "POST":
+		h.apiCancelKiroSso(w, r)
 	case path == "/auth/builderid/start" && r.Method == "POST":
 		h.apiStartBuilderIdLogin(w, r)
 	case path == "/auth/builderid/poll" && r.Method == "POST":
@@ -2721,8 +2719,21 @@ func (h *Handler) apiCompleteIamSso(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *Handler) apiStartMs365(w http.ResponseWriter, r *http.Request) {
-	sessionID, authorizeUrl, expiresIn, err := auth.StartMs365Login()
+// apiStartKiroSso starts the Kiro hosted-portal sign-in (Enterprise SSO — Microsoft 365 /
+// Entra ID, plus Google/GitHub). It binds the loopback callback listener and returns the
+// sign-in URL the operator opens in a browser ON THE SAME HOST as the proxy (the OAuth
+// redirect targets 127.0.0.1:3128). The browser is driven through the enterprise external-IdP
+// leg automatically; the front end polls /auth/kiro-sso/poll until completion.
+func (h *Handler) apiStartKiroSso(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Region string `json:"region"`
+	}
+	// Region is optional (defaults to us-east-1 in StartKiroSsoLogin), so a decode
+	// error (including an empty body) is intentionally tolerated — mirrors
+	// apiStartBuilderIdLogin.
+	json.NewDecoder(r.Body).Decode(&req)
+
+	session, signInURL, err := auth.StartKiroSsoLogin(req.Region)
 	if err != nil {
 		w.WriteHeader(500)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
@@ -2730,79 +2741,34 @@ func (h *Handler) apiStartMs365(w http.ResponseWriter, r *http.Request) {
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"sessionId":    sessionID,
-		"authorizeUrl": authorizeUrl,
-		"expiresIn":    expiresIn,
+		"sessionId": session.ID,
+		"signInUrl": signInURL,
+		"interval":  2,
 	})
 }
 
-func (h *Handler) apiPollMs365(w http.ResponseWriter, r *http.Request) {
+// apiCancelKiroSso tears down an in-flight hosted-portal sign-in (operator closed or
+// cancelled the modal), freeing the loopback callback port immediately instead of
+// waiting for the deadline.
+func (h *Handler) apiCancelKiroSso(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		SessionID string `json:"sessionId"`
 	}
 	json.NewDecoder(r.Body).Decode(&req)
-
-	done, tok, err := auth.PollMs365Login(req.SessionID)
-	if !done {
-		if err != nil {
-			w.WriteHeader(400)
-			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-			return
-		}
-		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "completed": false})
-		return
+	if req.SessionID != "" {
+		auth.CancelKiroSsoLogin(req.SessionID)
 	}
-	if err != nil {
-		w.WriteHeader(400)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-
-	account := ms365AccountFromToken(tok)
-	if err := config.AddAccount(account); err != nil {
-		w.WriteHeader(500)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-	h.pool.Reload()
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success":   true,
-		"completed": true,
-		"account": map[string]interface{}{
-			"id":    account.ID,
-			"email": account.Email,
-		},
-	})
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 }
 
-// ms365AccountFromToken builds an external_idp account from a resolved MS365
-// token. Such accounts refresh directly against the organization's IdP token
-// endpoint (Microsoft Entra), not via AWS OIDC or the Kiro social endpoint.
-func ms365AccountFromToken(tok *auth.Ms365Token) config.Account {
-	return config.Account{
-		ID:            auth.GenerateAccountID(),
-		Email:         tok.Email,
-		AccessToken:   tok.AccessToken,
-		RefreshToken:  tok.RefreshToken,
-		AuthMethod:    "external_idp",
-		Provider:      tok.Provider,
-		ClientID:      tok.ClientID,
-		TokenEndpoint: tok.TokenEndpoint,
-		Scopes:        tok.Scopes,
-		ExpiresAt:     tok.ExpiresAt,
-		Enabled:       true,
-		MachineId:     config.GenerateMachineId(),
-	}
-}
-
-func (h *Handler) apiCompleteMs365(w http.ResponseWriter, r *http.Request) {
+// apiPollKiroSso reports the hosted-portal sign-in status. While the user is signing in it
+// returns completed=false; once the listener captures the authorization code it exchanges it,
+// persists the account (AuthMethod "external_idp" for an Azure tenant, "social" otherwise), and
+// returns completed=true. The profileArn is resolved lazily on first use (the EXTERNAL_IDP
+// token type header is now sent on CodeWhisperer calls), so it is not required here.
+func (h *Handler) apiPollKiroSso(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		SessionID string `json:"sessionId"`
-		// TokenJson is the token JSON produced by a completed org sign-in
-		// (the contents of kiro-auth-token.json for an external_idp account).
-		TokenJson string `json:"tokenJson"`
-		// Callback is accepted as an alias so pasting either field works.
-		Callback string `json:"callback"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.WriteHeader(400)
@@ -2810,29 +2776,42 @@ func (h *Handler) apiCompleteMs365(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	raw := req.TokenJson
-	if raw == "" {
-		raw = req.Callback
-	}
-	raw = strings.TrimSpace(raw)
-
-	var tok *auth.Ms365Token
-	var err error
-	// A pasted redirect URL carrying an authorization code (kiro://... or
-	// http(s)://...?code=..) is completed via the code exchange; anything else
-	// is treated as a ready token JSON bundle.
-	if strings.Contains(raw, "code=") && !strings.HasPrefix(raw, "{") {
-		tok, err = auth.CompleteMs365Login(req.SessionID, raw)
-	} else {
-		tok, err = auth.ParseMs365Token(raw)
-	}
+	result, status, err := auth.PollKiroSsoAuth(req.SessionID)
 	if err != nil {
 		w.WriteHeader(400)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   err.Error(),
+		})
 		return
 	}
 
-	account := ms365AccountFromToken(tok)
+	if status == "pending" {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":   true,
+			"completed": false,
+			"status":    "pending",
+		})
+		return
+	}
+
+	account := config.Account{
+		ID:            auth.GenerateAccountID(),
+		Email:         result.Email,
+		AccessToken:   result.AccessToken,
+		RefreshToken:  result.RefreshToken,
+		ClientID:      result.ClientID,
+		AuthMethod:    result.AuthMethod,
+		Provider:      result.Provider,
+		Region:        result.Region,
+		ProfileArn:    result.ProfileArn,
+		TokenEndpoint: result.TokenEndpoint,
+		IssuerURL:     result.IssuerURL,
+		Scopes:        result.Scopes,
+		ExpiresAt:     time.Now().Unix() + int64(result.ExpiresIn),
+		Enabled:       true,
+		MachineId:     config.GenerateMachineId(),
+	}
 
 	if err := config.AddAccount(account); err != nil {
 		w.WriteHeader(500)
@@ -2842,10 +2821,12 @@ func (h *Handler) apiCompleteMs365(w http.ResponseWriter, r *http.Request) {
 
 	h.pool.Reload()
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success": true,
+		"success":   true,
+		"completed": true,
 		"account": map[string]interface{}{
-			"id":    account.ID,
-			"email": account.Email,
+			"id":         account.ID,
+			"email":      account.Email,
+			"authMethod": account.AuthMethod,
 		},
 	})
 }

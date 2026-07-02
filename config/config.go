@@ -55,6 +55,7 @@ type Account struct {
 	// the organization's IdP and refreshed directly against its OAuth2 token
 	// endpoint using ClientID + Scopes (no AWS OIDC, no Kiro social endpoint).
 	TokenEndpoint string `json:"tokenEndpoint,omitempty"` // IdP OAuth2 token endpoint (e.g. login.microsoftonline.com/{tenant}/oauth2/v2.0/token)
+	IssuerURL     string `json:"issuerUrl,omitempty"`     // IdP OIDC issuer URL (e.g. login.microsoftonline.com/{tenant}/v2.0)
 	Scopes        string `json:"scopes,omitempty"`        // Space-separated OAuth2 scopes used for refresh
 	ExpiresAt    int64  `json:"expiresAt,omitempty"`    // Token expiration timestamp (Unix seconds)
 	MachineId    string `json:"machineId,omitempty"`    // UUID machine identifier for request tracking

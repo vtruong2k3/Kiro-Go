@@ -15,7 +15,6 @@ package main
 
 import (
 	"fmt"
-	"kiro-go/auth"
 	"kiro-go/config"
 	"kiro-go/logger"
 	"kiro-go/pool"
@@ -28,15 +27,6 @@ import (
 )
 
 func main() {
-	// Custom-scheme callback forwarder: when Microsoft redirects to
-	// kiro://kiro.oauth/callback?code=.., Windows launches this exe with the
-	// URL as an argument. Forward it to the already-running login listener on
-	// :3128 and exit, so the org sign-in completes with no manual paste.
-	if len(os.Args) >= 3 && os.Args[1] == "ms365-callback" {
-		auth.ForwardMs365OSCallback(os.Args[2])
-		return
-	}
-
 	// 配置文件路径，支持环境变量覆盖
 	configPath := "data/config.json"
 	if envPath := os.Getenv("CONFIG_PATH"); envPath != "" {
