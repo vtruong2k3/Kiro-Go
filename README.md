@@ -108,10 +108,10 @@ The setting takes effect immediately without restarting.
 
 ## Environment Variables
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `CONFIG_PATH` | Config file path | `data/config.json` |
-| `ADMIN_PASSWORD` | Admin panel password (overrides config) | - |
+| Variable         | Description                             | Default            |
+| ---------------- | --------------------------------------- | ------------------ |
+| `CONFIG_PATH`    | Config file path                        | `data/config.json` |
+| `ADMIN_PASSWORD` | Admin panel password (overrides config) | -                  |
 
 ## Contributing
 

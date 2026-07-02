@@ -59,10 +59,29 @@ func applyKiroBaseHeaders(req *http.Request, account *config.Account, values kir
 	if account != nil && account.AccessToken != "" {
 		req.Header.Set("Authorization", "Bearer "+account.AccessToken)
 	}
+	if tokenType := kiroTokenType(account); tokenType != "" {
+		req.Header.Set("TokenType", tokenType)
+	}
 	req.Header.Set("User-Agent", values.UserAgent)
 	req.Header.Set("x-amz-user-agent", values.AmzUserAgent)
 	req.Header.Set("x-amzn-codewhisperer-optout", "true")
 	if values.Host != "" {
 		req.Host = values.Host
+	}
+}
+
+// kiroTokenType maps an account's auth method to the TokenType header value the
+// Kiro backend expects. This tells the CodeWhisperer/Q backend how to validate
+// the bearer token — external IdP (Microsoft Entra) JWTs are rejected as
+// "invalid" without it. Mirrors KiroIDE's auth-method → TokenType mapping.
+func kiroTokenType(account *config.Account) string {
+	if account == nil {
+		return ""
+	}
+	switch account.AuthMethod {
+	case "external_idp":
+		return "EXTERNAL_IDP"
+	default:
+		return ""
 	}
 }

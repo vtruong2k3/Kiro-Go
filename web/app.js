@@ -12,7 +12,8 @@
   }
   let password = sessionStorage.getItem('admin_password') || localStorage.getItem('admin_password') || '';
   let currentLang = localStorage.getItem('kiro_lang') || 'zh';
-  const dict = { en: null, zh: null };
+  const dict = { en: null, zh: null, vi: null };
+  const LANGS = ['zh', 'en', 'vi'];
   let accountsData = [];
   const selectedAccounts = new Set();
   let filterKeyword = '';
@@ -137,11 +138,12 @@
     qsa('.lang-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.lang === currentLang));
     qsa('.lang-toggle').forEach(btn => {
       const label = btn.querySelector('.lang-toggle-label');
-      if (label) label.textContent = currentLang === 'zh' ? t('lang.zh') : t('lang.en');
+      if (label) label.textContent = t('lang.' + currentLang);
     });
   }
   function toggleLang() {
-    setLang(currentLang === 'zh' ? 'en' : 'zh');
+    const idx = LANGS.indexOf(currentLang);
+    setLang(LANGS[(idx + 1) % LANGS.length]);
   }
 
   // Custom select

@@ -183,16 +183,24 @@ func ForwardMs365OSCallback(rawURL string) {
 }
 
 // registerMs365ProtocolHandler registers this executable as the handler for the
-// kiro:// URL scheme (Windows, current user). This lets the Microsoft Entra
-// redirect (kiro://kiro.oauth/callback?code=..) be captured automatically.
+// kiro:// URL scheme. This lets the Microsoft Entra redirect
+// (kiro://kiro.oauth/callback?code=..) be captured automatically.
 // Best-effort: failures are ignored (the manual paste path still works).
 //
 // Note: this overrides any existing kiro:// handler (e.g. the Kiro IDE) for the
 // current user while Kiro-Go is the registered handler.
 func registerMs365ProtocolHandler() {
-	if runtime.GOOS != "windows" {
-		return
+	switch runtime.GOOS {
+	case "windows":
+		registerMs365ProtocolHandlerWindows()
+	case "linux":
+		registerMs365ProtocolHandlerLinux()
 	}
+}
+
+// registerMs365ProtocolHandlerWindows registers the kiro:// URL scheme via
+// Windows registry (HKCU\Software\Classes\kiro).
+func registerMs365ProtocolHandlerWindows() {
 	exe, err := os.Executable()
 	if err != nil {
 		return
@@ -207,6 +215,49 @@ func registerMs365ProtocolHandler() {
 	for _, args := range runs {
 		_ = exec.Command("reg", args...).Run()
 	}
+}
+
+// registerMs365ProtocolHandlerLinux registers the kiro:// URL scheme on Linux
+// via a per-user XDG .desktop file + xdg-mime, mirroring the Windows registry
+// approach. Best-effort: failures are silently ignored.
+func registerMs365ProtocolHandlerLinux() {
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+
+	// Resolve symlinks so the .desktop Exec points to the real binary.
+	if resolved, e := os.Readlink(exe); e == nil {
+		exe = resolved
+	}
+
+	// Write ~/.local/share/applications/kiro-go-handler.desktop
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	appDir := homeDir + "/.local/share/applications"
+	if err := os.MkdirAll(appDir, 0o755); err != nil {
+		return
+	}
+
+	desktopContent := fmt.Sprintf(`[Desktop Entry]
+Name=Kiro-Go Protocol Handler
+Exec=%s ms365-callback %%u
+Type=Application
+NoDisplay=true
+MimeType=x-scheme-handler/kiro;
+`, exe)
+
+	desktopPath := appDir + "/kiro-go-handler.desktop"
+	if err := os.WriteFile(desktopPath, []byte(desktopContent), 0o644); err != nil {
+		return
+	}
+
+	// Register via xdg-mime (best-effort; requires xdg-utils).
+	_ = exec.Command("xdg-mime", "default", "kiro-go-handler.desktop", "x-scheme-handler/kiro").Run()
+	// Also update the MIME database so the change takes effect immediately.
+	_ = exec.Command("update-desktop-database", appDir).Run()
 }
 
 // completeMs365FromCallbackURL completes the pending session identified by the
