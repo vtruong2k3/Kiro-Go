@@ -7,6 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestApiKeyMigrationFromLegacyField(t *testing.T) {
@@ -264,6 +265,61 @@ func TestApiKeyOverLimit(t *testing.T) {
 					tc.entry, gotT, gotC, tc.wantToken, tc.wantCredit)
 			}
 		})
+	}
+}
+
+func TestApiKeyExpired(t *testing.T) {
+	now := time.Now().Unix()
+	tests := []struct {
+		name  string
+		entry ApiKeyEntry
+		want  bool
+	}{
+		{"never expires", ApiKeyEntry{ExpiresAt: 0}, false},
+		{"expires in future", ApiKeyEntry{ExpiresAt: now + 3600}, false},
+		{"already expired", ApiKeyEntry{ExpiresAt: now - 3600}, true},
+		{"expires exactly now", ApiKeyEntry{ExpiresAt: now}, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ApiKeyExpired(tc.entry); got != tc.want {
+				t.Fatalf("ApiKeyExpired(%+v) = %v, want %v", tc.entry, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestUpdateApiKeyExpiresAt(t *testing.T) {
+	cfgFile := filepath.Join(t.TempDir(), "config.json")
+	if err := Init(cfgFile); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	created, err := AddApiKey(ApiKeyEntry{Name: "exp", Key: "sk-exp", Enabled: true})
+	if err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if created.ExpiresAt != 0 {
+		t.Fatalf("expected new key to have no expiry, got %d", created.ExpiresAt)
+	}
+
+	future := time.Now().Unix() + 86400
+	patch := *GetApiKeyEntry(created.ID)
+	patch.ExpiresAt = future
+	if err := UpdateApiKey(created.ID, patch); err != nil {
+		t.Fatalf("update set expiry: %v", err)
+	}
+	if got := GetApiKeyEntry(created.ID); got == nil || got.ExpiresAt != future {
+		t.Fatalf("expected ExpiresAt=%d, got %+v", future, got)
+	}
+
+	// Clearing expiry (0) must persist — 0 is a valid value, not "leave unchanged".
+	patch = *GetApiKeyEntry(created.ID)
+	patch.ExpiresAt = 0
+	if err := UpdateApiKey(created.ID, patch); err != nil {
+		t.Fatalf("update clear expiry: %v", err)
+	}
+	if got := GetApiKeyEntry(created.ID); got == nil || got.ExpiresAt != 0 {
+		t.Fatalf("expected ExpiresAt to be cleared, got %+v", got)
 	}
 }
 

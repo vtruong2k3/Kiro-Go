@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func newAuthTestRequest(t *testing.T, header, value string) *http.Request {
@@ -80,6 +81,51 @@ func TestAuthenticateRejectsDisabledKey(t *testing.T) {
 	}
 	if !strings.Contains(ae.message, "disabled") {
 		t.Fatalf("expected disabled message, got %q", ae.message)
+	}
+}
+
+func TestAuthenticateRejectsExpiredKey(t *testing.T) {
+	mustInitConfig(t)
+	if _, err := config.AddApiKey(config.ApiKeyEntry{
+		Name: "exp", Key: "sk-exp", Enabled: true, ExpiresAt: time.Now().Unix() - 3600,
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	requireAuth(t)
+
+	h := &Handler{}
+	r := newAuthTestRequest(t, "Authorization", "Bearer sk-exp")
+	entry, err := h.authenticate(r)
+	if err == nil {
+		t.Fatalf("expected expired key to be rejected, got entry=%v", entry)
+	}
+	ae, ok := err.(*authError)
+	if !ok || ae.status != http.StatusUnauthorized {
+		t.Fatalf("expected 401 authError, got %v", err)
+	}
+	if !strings.Contains(ae.message, "expired") {
+		t.Fatalf("expected expired message, got %q", ae.message)
+	}
+}
+
+func TestAuthenticateAcceptsKeyExpiringInFuture(t *testing.T) {
+	mustInitConfig(t)
+	created, err := config.AddApiKey(config.ApiKeyEntry{
+		Name: "future", Key: "sk-future", Enabled: true, ExpiresAt: time.Now().Unix() + 3600,
+	})
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	requireAuth(t)
+
+	h := &Handler{}
+	r := newAuthTestRequest(t, "Authorization", "Bearer sk-future")
+	entry, err := h.authenticate(r)
+	if err != nil {
+		t.Fatalf("expected key with future expiry to succeed, got err=%v", err)
+	}
+	if entry == nil || entry.ID != created.ID {
+		t.Fatalf("expected entry to match seeded key, got %v", entry)
 	}
 }
 

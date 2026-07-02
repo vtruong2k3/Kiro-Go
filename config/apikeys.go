@@ -70,7 +70,7 @@ func AddApiKey(entry ApiKeyEntry) (ApiKeyEntry, error) {
 
 // UpdateApiKey applies a patch to an existing API key. Patch semantics:
 //   - Name, Key are overwritten when non-empty in patch.
-//   - Enabled, TokenLimit, CreditLimit are always overwritten (zero values are valid).
+//   - Enabled, TokenLimit, CreditLimit, ExpiresAt are always overwritten (zero values are valid).
 //   - Counters (TokensUsed/CreditsUsed/RequestsCount) are not touched here; use
 //     RecordApiKeyUsage or ResetApiKeyUsage instead.
 //   - Migrated stays as-is once true; only flips when explicitly set in patch.
@@ -106,6 +106,7 @@ func UpdateApiKey(id string, patch ApiKeyEntry) error {
 	cfg.ApiKeys[idx].Enabled = patch.Enabled
 	cfg.ApiKeys[idx].TokenLimit = patch.TokenLimit
 	cfg.ApiKeys[idx].CreditLimit = patch.CreditLimit
+	cfg.ApiKeys[idx].ExpiresAt = patch.ExpiresAt
 	if patch.Migrated {
 		cfg.ApiKeys[idx].Migrated = true
 	}
@@ -217,6 +218,13 @@ func MaskApiKey(key string) string {
 		return key
 	}
 	return key[:6] + "****" + key[len(key)-4:]
+}
+
+// ApiKeyExpired reports whether the entry has passed its expiration time.
+// ExpiresAt of 0 means the key never expires. The function does not lock;
+// callers should pass a copied entry.
+func ApiKeyExpired(e ApiKeyEntry) bool {
+	return e.ExpiresAt > 0 && time.Now().Unix() >= e.ExpiresAt
 }
 
 // ApiKeyOverLimit returns (overToken, overCredit) for the entry. Limits with value 0

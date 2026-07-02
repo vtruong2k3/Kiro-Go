@@ -1741,15 +1741,23 @@
       const disabled = !item.enabled
         ? '<span class="text-xs" style="background:rgba(239,68,68,0.15);color:#ef4444;padding:1px 6px;border-radius:4px;">' + escapeHtml(t('apiKeys.disabled')) + '</span>'
         : '';
+      const expired = item.expired
+        ? '<span class="text-xs" style="background:rgba(239,68,68,0.15);color:#ef4444;padding:1px 6px;border-radius:4px;">' + escapeHtml(t('apiKeys.expired')) + '</span>'
+        : '';
       const tokensLine = usageLine(t('apiKeys.tokens'), item.tokensUsed || 0, item.tokenLimit || 0);
       const creditsLine = usageLine(t('apiKeys.credits'), item.creditsUsed || 0, item.creditLimit || 0);
       const requestsLine = '<div class="text-xs muted-text">' + escapeHtml(t('apiKeys.requests')) + ': ' + escapeHtml(formatNumber(item.requestsCount || 0)) + '</div>';
+      const expiryText = item.expiresAt
+        ? new Date(item.expiresAt * 1000 - 1000).toLocaleDateString()
+        : t('apiKeys.neverExpires');
+      const expiryLine = '<div class="text-xs muted-text">' + escapeHtml(t('apiKeys.expiry')) + ': ' + escapeHtml(expiryText) + '</div>';
       return '<div class="card" data-apikey-id="' + id + '" style="margin-top:0.5rem;padding:0.75rem;">' +
         '<div class="flex items-center gap-2" style="flex-wrap:wrap;justify-content:space-between;">' +
           '<div class="flex items-center gap-2" style="flex-wrap:wrap;">' +
             '<span class="font-semibold">' + name + '</span>' +
             migrated +
             disabled +
+            expired +
             '<span class="text-xs muted-text font-mono">' + masked + '</span>' +
           '</div>' +
           '<div class="flex items-center gap-2">' +
@@ -1766,10 +1774,37 @@
           tokensLine +
           creditsLine +
           requestsLine +
+          expiryLine +
         '</div>' +
       '</div>';
     }).join('');
     list.innerHTML = html;
+  }
+
+  // Expiry uses browser-local time. The date picker holds the last valid day;
+  // the stored expiresAt is 00:00 local of the following day, so the key works
+  // through the end of the selected day and dies at midnight after it.
+  function dateInputToExpiresAt(dateStr) {
+    if (!dateStr) return 0;
+    const parts = dateStr.split('-');
+    if (parts.length !== 3) return 0;
+    const y = parseInt(parts[0], 10);
+    const m = parseInt(parts[1], 10);
+    const d = parseInt(parts[2], 10);
+    if (isNaN(y) || isNaN(m) || isNaN(d)) return 0;
+    // Local midnight of the day AFTER the selected day.
+    const dt = new Date(y, m - 1, d + 1, 0, 0, 0, 0);
+    return Math.floor(dt.getTime() / 1000);
+  }
+
+  function expiresAtToDateInput(expiresAt) {
+    if (!expiresAt) return '';
+    // Step back 1s so we land on the selected day, then format local YYYY-MM-DD.
+    const dt = new Date((expiresAt - 1) * 1000);
+    const y = dt.getFullYear();
+    const m = String(dt.getMonth() + 1).padStart(2, '0');
+    const d = String(dt.getDate()).padStart(2, '0');
+    return y + '-' + m + '-' + d;
   }
 
   function openApiKeyModal(entry) {
@@ -1788,6 +1823,7 @@
     $('apiKeyForm_enabled').checked = entry ? !!entry.enabled : true;
     $('apiKeyForm_tokenLimit').value = entry ? String(entry.tokenLimit || 0) : '0';
     $('apiKeyForm_creditLimit').value = entry ? String(entry.creditLimit || 0) : '0';
+    $('apiKeyForm_expiryDate').value = entry && entry.expiresAt ? expiresAtToDateInput(entry.expiresAt) : '';
     apiKeyModalSubmitting = false;
     $('apiKeyModalSaveBtn').disabled = false;
     openDialog('apiKeyModal');
@@ -1814,7 +1850,8 @@
         name: name,
         enabled: enabled,
         tokenLimit: isNaN(tokenLimit) || tokenLimit < 0 ? 0 : tokenLimit,
-        creditLimit: isNaN(creditLimit) || creditLimit < 0 ? 0 : creditLimit
+        creditLimit: isNaN(creditLimit) || creditLimit < 0 ? 0 : creditLimit,
+        expiresAt: dateInputToExpiresAt($('apiKeyForm_expiryDate').value)
       };
       let res, d;
       if (apiKeyEditingId) {

@@ -139,6 +139,7 @@ type ApiKeyEntry struct {
 	Migrated   bool   `json:"migrated,omitempty"` // True if migrated from legacy single ApiKey field
 	CreatedAt  int64  `json:"createdAt"`          // Creation timestamp (Unix seconds)
 	LastUsedAt int64  `json:"lastUsedAt,omitempty"`
+	ExpiresAt  int64  `json:"expiresAt,omitempty"` // Expiration timestamp (Unix seconds); 0 = never expires
 
 	// Limits (0 = unlimited)
 	TokenLimit  int64   `json:"tokenLimit,omitempty"`

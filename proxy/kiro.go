@@ -299,15 +299,6 @@ func CallKiroAPI(account *config.Account, payload *KiroPayload, callback *KiroSt
 	}
 	setPayloadProfileArnForAccount(payload, account)
 
-	if _, err := json.Marshal(payload); err != nil {
-		return err
-	}
-
-	// Debug: dump full payload for troubleshooting upstream rejections
-	if payloadJSON, err := json.Marshal(payload); err == nil {
-		logger.Debugf("[KiroAPI] Request payload: %s", string(payloadJSON))
-	}
-
 	// Wrap OnToolUse to restore original tool names for the client.
 	if callback != nil && callback.OnToolUse != nil && len(payload.ToolNameMap) > 0 {
 		originalOnToolUse := callback.OnToolUse
@@ -344,6 +335,9 @@ func CallKiroAPI(account *config.Account, payload *KiroPayload, callback *KiroSt
 		epURL := regionalizeURLForProfile(ep.URL, account, payload.ProfileArn)
 
 		reqBody, _ := json.Marshal(payload)
+		if logger.GetLevel() == logger.LevelDebug {
+			logger.Debugf("[KiroAPI] Request payload: %s", string(reqBody))
+		}
 		req, err := http.NewRequest("POST", epURL, bytes.NewReader(reqBody))
 		if err != nil {
 			lastErr = err
