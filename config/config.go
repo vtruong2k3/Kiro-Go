@@ -61,6 +61,15 @@ type Account struct {
 	MachineId    string `json:"machineId,omitempty"`    // UUID machine identifier for request tracking
 	ProfileArn   string `json:"profileArn,omitempty"`   // CodeWhisperer/Kiro profile ARN for generation requests
 
+	// Antigravity (Google Cloud Code / Gemini Code Assist) fields.
+	// Only populated when AuthMethod == "antigravity" / Provider == "Antigravity".
+	// AccessToken/RefreshToken/ExpiresAt/Scopes/Email are reused from above;
+	// Google uses a single hardcoded public OAuth client (see auth/antigravity.go),
+	// so ClientID/ClientSecret are not per-account for this provider.
+	AGProjectID string `json:"agProjectId,omitempty"` // cloudaicompanionProject (real GCP project id, anti-abuse)
+	AGTier      string `json:"agTier,omitempty"`      // resolved tier id from loadCodeAssist/onboardUser
+	AGSessionID string `json:"agSessionId,omitempty"` // stable X-Machine-Session-Id for this account
+
 	// Per-account outbound proxy (falls back to global ProxyURL if empty)
 	ProxyURL string `json:"proxyURL,omitempty"`
 
@@ -521,6 +530,29 @@ func UpdateAccountProfileArn(id, profileArn string) error {
 	for i, a := range cfg.Accounts {
 		if a.ID == id {
 			cfg.Accounts[i].ProfileArn = profileArn
+			return Save()
+		}
+	}
+	return nil
+}
+
+// UpdateAccountAntigravity persists the Antigravity project id, tier, and session
+// id for a Google Cloud Code account. Empty projectId/tier are ignored so a
+// token-only refresh (which does not re-resolve the project) cannot clobber them.
+func UpdateAccountAntigravity(id, projectID, tier, sessionID string) error {
+	cfgLock.Lock()
+	defer cfgLock.Unlock()
+	for i, a := range cfg.Accounts {
+		if a.ID == id {
+			if projectID != "" {
+				cfg.Accounts[i].AGProjectID = projectID
+			}
+			if tier != "" {
+				cfg.Accounts[i].AGTier = tier
+			}
+			if sessionID != "" {
+				cfg.Accounts[i].AGSessionID = sessionID
+			}
 			return Save()
 		}
 	}

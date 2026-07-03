@@ -78,6 +78,13 @@ func ParseModelAndThinking(model string, thinkingSuffix string) (string, bool) {
 		lower = strings.ToLower(model)
 	}
 
+	// 0) Antigravity / Gemini model ids pass through untouched. They must not be
+	//    rewritten to Claude ids by the alias/version logic below, so requests for
+	//    gemini-* route to Antigravity accounts (which register these ids).
+	if strings.HasPrefix(lower, "gemini-") {
+		return model, thinking
+	}
+
 	// 1) Explicit aliases: dated snapshots, cross-family legacy IDs, non-Anthropic fallbacks.
 	for _, m := range modelAliases {
 		if strings.Contains(lower, m.key) {
@@ -340,6 +347,9 @@ func ClaudeToKiro(req *ClaudeRequest, thinking bool) *KiroPayload {
 	}
 
 	truncatePayloadToLimit(payload, systemPrompt != "")
+
+	payload.SourceClaude = req
+	payload.SourceThinking = thinking
 
 	return payload
 }
@@ -1280,6 +1290,9 @@ func OpenAIToKiro(req *OpenAIRequest, thinking bool) *KiroPayload {
 	}
 
 	truncatePayloadToLimit(payload, systemPrompt != "")
+
+	payload.SourceOpenAI = req
+	payload.SourceThinking = thinking
 
 	return payload
 }

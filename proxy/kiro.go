@@ -163,6 +163,14 @@ type KiroPayload struct {
 	// in tool_use responses so the client can match them to its tool registry.
 	// Not serialized to the Kiro API request body.
 	ToolNameMap map[string]string `json:"-"`
+
+	// Source request preserved for non-Kiro providers (e.g. Antigravity).
+	// The Kiro payload is built before an upstream account is selected; when the
+	// selected account is a non-Kiro provider, its translator rebuilds the wire
+	// request from the pristine source rather than the lossy Kiro shape.
+	SourceClaude   *ClaudeRequest `json:"-"`
+	SourceOpenAI   *OpenAIRequest `json:"-"`
+	SourceThinking bool           `json:"-"`
 }
 
 type KiroUserInputMessage struct {

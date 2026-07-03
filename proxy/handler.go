@@ -589,6 +589,15 @@ func (h *Handler) refreshModelsCache() {
 			continue
 		}
 
+		// Antigravity accounts do not expose an AWS ListAvailableModels endpoint;
+		// register their static model list so gemini-* requests route to them.
+		if isAntigravityAccount(account) {
+			modelIDs := antigravityModelIDs()
+			h.pool.SetModelList(account.ID, modelIDs)
+			aggregated = mergeUniqueModels(aggregated, antigravityModelInfos())
+			continue
+		}
+
 		models, err := ListAvailableModels(account)
 		if err != nil {
 			logger.Warnf("[ModelsCache] Failed to refresh for %s: %v", account.Email, err)
@@ -619,6 +628,19 @@ func (h *Handler) fetchAndCacheAccountModels(account *config.Account) error {
 	if err := h.ensureValidToken(account); err != nil {
 		return fmt.Errorf("token refresh failed: %w", err)
 	}
+
+	// Antigravity accounts use a static model list (no AWS ListAvailableModels).
+	if isAntigravityAccount(account) {
+		h.pool.SetModelList(account.ID, antigravityModelIDs())
+		agModels := antigravityModelInfos()
+		h.modelsCacheMu.Lock()
+		h.cachedModels = mergeUniqueModels(h.cachedModels, agModels)
+		h.modelsCacheTime = time.Now().Unix()
+		h.modelsCacheMu.Unlock()
+		logger.Infof("[ModelsCache] Registered %d Antigravity models for account %s", len(agModels), account.Email)
+		return nil
+	}
+
 	models, err := ListAvailableModels(account)
 	if err != nil {
 		return err
@@ -1215,7 +1237,7 @@ func (h *Handler) handleClaudeStream(w http.ResponseWriter, payload *KiroPayload
 			},
 		}
 
-		err := CallKiroAPI(account, payload, callback)
+		err := CallProvider(account, payload, callback)
 		if err != nil {
 			lastErr = err
 			excluded[account.ID] = true
@@ -1489,7 +1511,7 @@ func (h *Handler) handleClaudeNonStream(w http.ResponseWriter, payload *KiroPayl
 			},
 		}
 
-		err := CallKiroAPI(account, payload, callback)
+		err := CallProvider(account, payload, callback)
 		if err != nil {
 			lastErr = err
 			excluded[account.ID] = true
@@ -1926,7 +1948,7 @@ func (h *Handler) handleOpenAIStream(w http.ResponseWriter, payload *KiroPayload
 			},
 		}
 
-		err := CallKiroAPI(account, payload, callback)
+		err := CallProvider(account, payload, callback)
 		if err != nil {
 			lastErr = err
 			excluded[account.ID] = true
@@ -2045,7 +2067,7 @@ func (h *Handler) handleOpenAINonStream(w http.ResponseWriter, payload *KiroPayl
 			},
 		}
 
-		err := CallKiroAPI(account, payload, callback)
+		err := CallProvider(account, payload, callback)
 		if err != nil {
 			lastErr = err
 			excluded[account.ID] = true
@@ -2213,6 +2235,12 @@ func (h *Handler) handleAdminAPI(w http.ResponseWriter, r *http.Request) {
 		h.apiPollKiroSso(w, r)
 	case path == "/auth/kiro-sso/cancel" && r.Method == "POST":
 		h.apiCancelKiroSso(w, r)
+	case path == "/auth/antigravity/start" && r.Method == "POST":
+		h.apiStartAntigravity(w, r)
+	case path == "/auth/antigravity/poll" && r.Method == "POST":
+		h.apiPollAntigravity(w, r)
+	case path == "/auth/antigravity/cancel" && r.Method == "POST":
+		h.apiCancelAntigravity(w, r)
 	case path == "/auth/builderid/start" && r.Method == "POST":
 		h.apiStartBuilderIdLogin(w, r)
 	case path == "/auth/builderid/poll" && r.Method == "POST":
@@ -2831,6 +2859,110 @@ func (h *Handler) apiPollKiroSso(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// apiStartAntigravity starts the Antigravity (Google Cloud Code / Gemini) sign-in.
+// It binds the loopback callback listener and returns the Google consent URL the
+// operator opens in a browser ON THE SAME HOST as the proxy (the OAuth redirect
+// targets 127.0.0.1:3129). The front end polls /auth/antigravity/poll until done.
+func (h *Handler) apiStartAntigravity(w http.ResponseWriter, r *http.Request) {
+	session, authURL, err := auth.StartAntigravityLogin()
+	if err != nil {
+		w.WriteHeader(500)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"sessionId": session.ID,
+		"signInUrl": authURL,
+		"interval":  2,
+	})
+}
+
+// apiCancelAntigravity tears down an in-flight Antigravity sign-in, freeing the
+// loopback callback port immediately.
+func (h *Handler) apiCancelAntigravity(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SessionID string `json:"sessionId"`
+	}
+	json.NewDecoder(r.Body).Decode(&req)
+	if req.SessionID != "" {
+		auth.CancelAntigravityLogin(req.SessionID)
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
+}
+
+// apiPollAntigravity reports the Antigravity sign-in status. Once the listener
+// captures the authorization code it runs the bootstrap chain (exchange ->
+// loadCodeAssist -> onboardUser), persists the account (AuthMethod "antigravity"),
+// registers its static model list so gemini-* requests route to it, and returns
+// completed=true.
+func (h *Handler) apiPollAntigravity(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SessionID string `json:"sessionId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(400)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid JSON"})
+		return
+	}
+
+	result, status, err := auth.PollAntigravityAuth(req.SessionID)
+	if err != nil {
+		w.WriteHeader(400)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	if status == "pending" {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":   true,
+			"completed": false,
+			"status":    "pending",
+		})
+		return
+	}
+
+	account := config.Account{
+		ID:           auth.GenerateAccountID(),
+		Email:        result.Email,
+		AccessToken:  result.AccessToken,
+		RefreshToken: result.RefreshToken,
+		AuthMethod:   "antigravity",
+		Provider:     "Antigravity",
+		Scopes:       result.Scopes,
+		ExpiresAt:    time.Now().Unix() + int64(result.ExpiresIn),
+		AGProjectID:  result.ProjectID,
+		AGTier:       result.Tier,
+		AGSessionID:  uuid.New().String(),
+		Enabled:      true,
+		MachineId:    config.GenerateMachineId(),
+	}
+
+	if err := config.AddAccount(account); err != nil {
+		w.WriteHeader(500)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	h.pool.Reload()
+	// Register the static Antigravity model list immediately so the first request
+	// routes to this account without waiting for the background models refresh.
+	h.pool.SetModelList(account.ID, antigravityModelIDs())
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":   true,
+		"completed": true,
+		"account": map[string]interface{}{
+			"id":         account.ID,
+			"email":      account.Email,
+			"authMethod": account.AuthMethod,
+			"projectId":  account.AGProjectID,
+		},
+	})
+}
+
 func (h *Handler) apiStartBuilderIdLogin(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Region string `json:"region"`
@@ -3302,7 +3434,7 @@ func (h *Handler) apiTestAccount(w http.ResponseWriter, r *http.Request, id stri
 		OnContextUsage: func(pct float64) {},
 	}
 
-	err := CallKiroAPI(account, kiroPayload, callback)
+	err := CallProvider(account, kiroPayload, callback)
 	if err != nil {
 		w.WriteHeader(500)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
@@ -3511,6 +3643,18 @@ func (h *Handler) apiGetAccountModels(w http.ResponseWriter, r *http.Request, id
 	if account == nil {
 		w.WriteHeader(404)
 		json.NewEncoder(w).Encode(map[string]string{"error": "Account not found"})
+		return
+	}
+
+	// Antigravity accounts serve a static model list (no AWS ListAvailableModels).
+	if isAntigravityAccount(account) {
+		models := antigravityModelInfos()
+		h.pool.SetModelList(id, antigravityModelIDs())
+		h.modelsCacheMu.Lock()
+		h.cachedModels = mergeUniqueModels(h.cachedModels, models)
+		h.modelsCacheTime = time.Now().Unix()
+		h.modelsCacheMu.Unlock()
+		json.NewEncoder(w).Encode(map[string]interface{}{"models": models})
 		return
 	}
 

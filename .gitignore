@@ -1,5 +1,6 @@
 # Build artifacts
 /kiro-go
+/9router
 /kiro-go.exe
 *.exe
 *.test

@@ -229,6 +229,8 @@
   "modal.cookieDesc": "Thêm tài khoản qua RefreshToken lấy từ Kiro Web Cookie",
   "modal.enterpriseSsoTitle": "Enterprise SSO - Microsoft 365",
   "modal.enterpriseSsoDesc": "Thêm tài khoản Microsoft 365 / Entra ID (Azure AD) qua Kiro hosted SSO",
+  "modal.antigravityTitle": "Antigravity - Google",
+  "modal.antigravityDesc": "Thêm tài khoản Google qua đăng nhập OAuth Antigravity (Cloud Code / Gemini)",
   "kirosso.hostNote": "Mở liên kết đăng nhập trên chính máy này (cùng máy chủ với proxy). Trình duyệt sẽ tự động chuyển hướng qua trang đăng nhập Microsoft 365 của bạn.",
   "kirosso.openInstruction": "Một tab trình duyệt đã được mở. Đăng nhập bằng tài khoản Microsoft 365 (cơ quan/trường học) của bạn, rồi quay lại đây. Mẹo: dùng cửa sổ ẩn danh/khách để tránh phiên đăng nhập đã lưu.",
   "cookie.howToGet": "Cách lấy RefreshToken?",

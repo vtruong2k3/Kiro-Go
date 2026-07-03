@@ -25,6 +25,8 @@
   let iamSession = '';
   let kiroSsoSession = '';
   let kiroSsoPollTimer = null;
+  let antigravitySession = '';
+  let antigravityPollTimer = null;
   let exportSelectedIds = new Set();
   let currentVersion = '';
   let testLogs = [];
@@ -2089,6 +2091,7 @@
     else if (type === 'credentials') modalCredentials(title, body);
     else if (type === 'cookie') modalCookie(title, body);
     else if (type === 'enterprisesso') modalEnterpriseSso(title, body);
+    else if (type === 'antigravity') modalAntigravity(title, body);
     if (!modal.classList.contains('active')) openDialog('addModal');
     enhanceCustomSelects(body);
   }
@@ -2103,8 +2106,18 @@
       api('/auth/kiro-sso/cancel', { method: 'POST', body: JSON.stringify({ sessionId: kiroSsoSession }) }).catch(() => {});
     }
     kiroSsoSession = '';
+    if (antigravityPollTimer) { clearTimeout(antigravityPollTimer); antigravityPollTimer = null; }
+    if (antigravitySession) {
+      api('/auth/antigravity/cancel', { method: 'POST', body: JSON.stringify({ sessionId: antigravitySession }) }).catch(() => {});
+    }
+    antigravitySession = '';
     if (builderIdPollTimer) { clearTimeout(builderIdPollTimer); builderIdPollTimer = null; }
     builderIdSession = '';
+    if (antigravityPollTimer) { clearTimeout(antigravityPollTimer); antigravityPollTimer = null; }
+    if (antigravitySession) {
+      api('/auth/antigravity/cancel', { method: 'POST', body: JSON.stringify({ sessionId: antigravitySession }) }).catch(() => {});
+    }
+    antigravitySession = '';
   }
   function modalAdd(title, body) {
     title.textContent = t('modal.addAccount');
@@ -2117,6 +2130,7 @@
       methodCard('credentials', t('modal.credentialsTitle'), t('modal.credentialsDesc')) +
       methodCard('cookie', t('modal.cookieTitle'), t('modal.cookieDesc')) +
       methodCard('enterprisesso', t('modal.enterpriseSsoTitle'), t('modal.enterpriseSsoDesc')) +
+      methodCard('antigravity', t('modal.antigravityTitle'), t('modal.antigravityDesc')) +
       '</div>' +
       '<div class="modal-footer"><button class="btn btn-secondary" data-close-add="1" type="button">' + escapeHtml(t('common.cancel')) + '</button></div>';
   }
@@ -2240,6 +2254,75 @@
       api('/auth/kiro-sso/cancel', { method: 'POST', body: JSON.stringify({ sessionId: kiroSsoSession }) }).catch(() => {});
     }
     kiroSsoSession = '';
+    showModal('add');
+  }
+  function modalAntigravity(title, body) {
+    title.textContent = t('modal.antigravityTitle');
+    body.innerHTML =
+      '<p class="help-block">' + escapeHtml(t('modal.antigravityDesc')) + '</p>' +
+      '<div id="antigravityStep1">' +
+      '<div class="message message-info"><p class="text-xs">' + escapeHtml(t('kirosso.hostNote')) + '</p></div>' +
+      '<div class="modal-footer">' +
+      '<button class="btn btn-secondary" data-modal-goto="add" type="button">' + escapeHtml(t('common.back')) + '</button>' +
+      '<button class="btn btn-primary" id="startAntigravityBtn" type="button">' + escapeHtml(t('builderid.startLogin')) + '</button>' +
+      '</div>' +
+      '</div>' +
+      '<div id="antigravityStep2" class="hidden">' +
+      '<div class="message message-info"><p class="text-xs">' + escapeHtml(t('kirosso.openInstruction')) + '</p></div>' +
+      '<div class="form-group mt-3"><label>' + escapeHtml(t('iam.loginUrl')) + '</label>' +
+      '<div class="endpoint"><span id="antigravitySignInUrl" class="font-mono text-xs"></span></div>' +
+      '<div class="flex gap-2 mt-2">' +
+      '<button class="btn btn-sm btn-outline flex-1" id="antigravityOpenBtn" type="button">' + escapeHtml(t('builderid.open')) + '</button>' +
+      '<button class="btn btn-sm btn-outline flex-1" id="antigravityCopyBtn" type="button">' + escapeHtml(t('common.copy')) + '</button>' +
+      '</div>' +
+      '</div>' +
+      '<p id="antigravityStatus" class="text-center text-sm mt-4 muted-text">' + escapeHtml(t('builderid.waiting')) + '</p>' +
+      '<div class="modal-footer"><button class="btn btn-secondary" id="antigravityCancelBtn" type="button">' + escapeHtml(t('common.cancel')) + '</button></div>' +
+      '</div>';
+    $('startAntigravityBtn').addEventListener('click', startAntigravityLogin);
+  }
+  async function startAntigravityLogin() {
+    const res = await api('/auth/antigravity/start', { method: 'POST', body: JSON.stringify({}) });
+    const d = await res.json();
+    if (d.sessionId && d.signInUrl) {
+      antigravitySession = d.sessionId;
+      $('antigravitySignInUrl').textContent = d.signInUrl;
+      $('antigravityStep1').classList.add('hidden');
+      $('antigravityStep2').classList.remove('hidden');
+      $('antigravityOpenBtn').addEventListener('click', () => window.open($('antigravitySignInUrl').textContent, '_blank'));
+      $('antigravityCopyBtn').addEventListener('click', async () => {
+        await copyText($('antigravitySignInUrl').textContent);
+        toast(t('common.copied'), 'primary');
+      });
+      $('antigravityCancelBtn').addEventListener('click', cancelAntigravityLogin);
+      window.open(d.signInUrl, '_blank');
+      pollAntigravity(d.interval || 2);
+    } else toastError(t('common.failed') + ': ' + (d.error || ''));
+  }
+  function pollAntigravity(interval) {
+    antigravityPollTimer = setTimeout(async () => {
+      const res = await api('/auth/antigravity/poll', { method: 'POST', body: JSON.stringify({ sessionId: antigravitySession }) });
+      const d = await res.json();
+      if (d.completed) {
+        antigravitySession = '';
+        closeModal(); loadAccounts(); loadStats();
+        toastPrimary(t('builderid.success') + ': ' + (d.account?.email || d.account?.id));
+        autoRefreshNewAccount(d.account?.id);
+      } else if (d.success && !d.completed) {
+        $('antigravityStatus').textContent = t('builderid.waiting');
+        pollAntigravity(interval);
+      } else {
+        toastError(t('common.failed') + ': ' + (d.error || ''));
+        cancelAntigravityLogin();
+      }
+    }, interval * 1000);
+  }
+  function cancelAntigravityLogin() {
+    if (antigravityPollTimer) { clearTimeout(antigravityPollTimer); antigravityPollTimer = null; }
+    if (antigravitySession) {
+      api('/auth/antigravity/cancel', { method: 'POST', body: JSON.stringify({ sessionId: antigravitySession }) }).catch(() => {});
+    }
+    antigravitySession = '';
     showModal('add');
   }
   function modalSso(title, body) {

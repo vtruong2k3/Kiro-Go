@@ -32,6 +32,13 @@ func RefreshToken(account *config.Account) (string, string, int64, string, error
 	}
 	client := GetAuthClientForProxy(proxyURL)
 
+	// Antigravity (Google Cloud Code / Gemini) accounts refresh against Google's
+	// OAuth2 token endpoint (refresh_token grant, hardcoded public client). They
+	// have no AWS profileArn, so "" is returned for it.
+	if account.AuthMethod == "antigravity" {
+		return RefreshAntigravityToken(account, client)
+	}
+
 	// External IdP (enterprise SSO, e.g. Azure AD) tokens are refreshed against the
 	// IdP token endpoint (refresh_token grant, public client), NOT the AWS SSO OIDC
 	// endpoint. Selecting it on AuthMethod (rather than letting it fall through to the

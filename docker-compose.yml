@@ -11,6 +11,10 @@ services:
       # the callback off the host's external interfaces while still letting the
       # host browser's localhost:3128 reach the container listener below.
       - "127.0.0.1:3128:3128"
+      # Antigravity (Google Cloud Code / Gemini) OAuth callback. Same rationale as
+      # 3128 above: Google redirects the browser to localhost:3129, so the operator
+      # runs that browser ON THE DOCKER HOST. Pinned host-side to loopback.
+      - "127.0.0.1:3129:3129"
     volumes:
       - ./data:/app/data
     environment:
@@ -24,4 +28,8 @@ services:
       # network during that window; on a shared/untrusted Docker network, pin
       # KIRO_SSO_CALLBACK_BIND to a specific interface or isolate the network.
       - KIRO_SSO_CALLBACK_BIND=0.0.0.0
+      # Same as KIRO_SSO_CALLBACK_BIND but for the Antigravity callback listener on
+      # 3129: default loopback-only cannot be reached by the published port, so bind
+      # 0.0.0.0 inside the container (host-side publish is pinned to loopback).
+      - ANTIGRAVITY_CALLBACK_BIND=0.0.0.0
     restart: unless-stopped
