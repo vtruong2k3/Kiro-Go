@@ -411,6 +411,14 @@ func RefreshAccountInfo(account *config.Account) (*config.AccountInfo, error) {
 		LastRefresh: time.Now().Unix(),
 	}
 
+	// Antigravity (Google Cloud Code / Gemini) accounts do NOT have the Kiro
+	// getUsageLimits endpoint. Routing them there returns 401/403, which the
+	// error handling below would misread as a suspension and auto-ban a healthy
+	// account. Refresh them against cloudcode-pa instead.
+	if isAntigravityAccount(account) {
+		return refreshAntigravityInfo(account, info)
+	}
+
 	// 获取使用量和订阅信息
 	usage, err := GetUsageLimits(account)
 	if err != nil {
@@ -539,6 +547,58 @@ func RefreshAccountInfo(account *config.Account) (*config.AccountInfo, error) {
 	}
 
 	return info, nil
+}
+
+// refreshAntigravityInfo refreshes an Antigravity (Gemini Code Assist) account's
+// tier and per-model quota. It hits cloudcode-pa loadCodeAssist + retrieveUserQuota
+// instead of the Kiro getUsageLimits endpoint (which would 401/403 with a Google
+// token and wrongly trip the auto-ban path in RefreshAccountInfo).
+//
+// Quota is best-effort: a retrieveUserQuota failure keeps the account alive and
+// only leaves the quota list empty. loadCodeAssist failing on auth is surfaced so
+// the caller can attempt a token refresh + retry.
+func refreshAntigravityInfo(account *config.Account, info *config.AccountInfo) (*config.AccountInfo, error) {
+	client := auth.GetAuthClientForProxy(ResolveAccountProxyURL(account))
+
+	projectID, tier, tierName, quota, err := auth.RefreshAntigravityAccount(client, account.AccessToken, account.AGProjectID)
+	if err != nil {
+		return nil, fmt.Errorf("Antigravity loadCodeAssist: %w", err)
+	}
+
+	if projectID != "" {
+		account.AGProjectID = projectID
+	}
+	info.AGTier = tier
+	info.AGTierName = tierName
+	info.AGQuota = quota
+	info.SubscriptionType = antigravityTierToSubscription(tier)
+	info.SubscriptionTitle = tierName
+	if info.SubscriptionTitle == "" {
+		info.SubscriptionTitle = tier
+	}
+
+	// Persist the resolved project id/tier so a later token-only refresh keeps them.
+	if err := config.UpdateAccountAntigravity(account.ID, projectID, tier, ""); err != nil {
+		logger.Warnf("[Antigravity] persist tier/project failed for %s: %v", account.Email, err)
+	}
+	return info, nil
+}
+
+// antigravityTierToSubscription maps a Gemini Code Assist tier id to the internal
+// SubscriptionType bucket the UI badge uses. free-tier/legacy-tier map to FREE;
+// standard/paid tiers map to PRO so they no longer show as free.
+func antigravityTierToSubscription(tier string) string {
+	t := strings.ToLower(strings.TrimSpace(tier))
+	switch {
+	case t == "" || strings.Contains(t, "free") || strings.Contains(t, "legacy"):
+		return "FREE"
+	case strings.Contains(t, "enterprise") || strings.Contains(t, "power"):
+		return "POWER"
+	case strings.Contains(t, "standard") || strings.Contains(t, "paid") || strings.Contains(t, "pro"):
+		return "PRO"
+	default:
+		return "PRO"
+	}
 }
 
 func parseSubscriptionType(raw string) string {

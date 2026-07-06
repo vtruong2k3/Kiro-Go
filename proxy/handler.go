@@ -2233,6 +2233,8 @@ func (h *Handler) handleAdminAPI(w http.ResponseWriter, r *http.Request) {
 		h.apiStartKiroSso(w, r)
 	case path == "/auth/kiro-sso/poll" && r.Method == "POST":
 		h.apiPollKiroSso(w, r)
+	case path == "/auth/kiro-sso/complete" && r.Method == "POST":
+		h.apiCompleteKiroSso(w, r)
 	case path == "/auth/kiro-sso/cancel" && r.Method == "POST":
 		h.apiCancelKiroSso(w, r)
 	case path == "/auth/antigravity/start" && r.Method == "POST":
@@ -2241,6 +2243,8 @@ func (h *Handler) handleAdminAPI(w http.ResponseWriter, r *http.Request) {
 		h.apiPollAntigravity(w, r)
 	case path == "/auth/antigravity/cancel" && r.Method == "POST":
 		h.apiCancelAntigravity(w, r)
+	case path == "/auth/antigravity/complete" && r.Method == "POST":
+		h.apiCompleteAntigravity(w, r)
 	case path == "/auth/builderid/start" && r.Method == "POST":
 		h.apiStartBuilderIdLogin(w, r)
 	case path == "/auth/builderid/poll" && r.Method == "POST":
@@ -2356,6 +2360,10 @@ func (h *Handler) apiGetAccounts(w http.ResponseWriter, r *http.Request) {
 			"trialUsagePercent": a.TrialUsagePercent,
 			"trialStatus":       a.TrialStatus,
 			"trialExpiresAt":    a.TrialExpiresAt,
+			"agProjectId":       a.AGProjectID,
+			"agTier":            a.AGTier,
+			"agTierName":        a.AGTierName,
+			"agQuota":           a.AGQuota,
 			"requestCount":      stats.RequestCount,
 			"errorCount":        stats.ErrorCount,
 			"totalTokens":       stats.TotalTokens,
@@ -2823,6 +2831,59 @@ func (h *Handler) apiPollKiroSso(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.persistKiroSsoResult(w, result)
+}
+
+// apiCompleteKiroSso finishes a hosted-portal sign-in from a manually pasted
+// callback URL. This is the fallback for headless / domain deployments where the
+// admin's browser cannot reach the loopback callback listener on the proxy host:
+// the OAuth redirects target localhost:3128 and the resulting "site can't be
+// reached" page still carries the callback query in its address bar, which the
+// admin copies here.
+//
+// The Microsoft 365 (external IdP) flow has two legs, so this can return
+// completed=false with a redirectUrl (the Microsoft login URL to open next) after
+// the first paste, then completed=true after the second. A social login completes
+// in a single paste.
+func (h *Handler) apiCompleteKiroSso(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SessionID   string `json:"sessionId"`
+		CallbackUrl string `json:"callbackUrl"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(400)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid JSON"})
+		return
+	}
+
+	result, status, redirectURL, err := auth.CompleteKiroSsoManual(req.SessionID, req.CallbackUrl)
+	if err != nil {
+		w.WriteHeader(400)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	// Leg-1 of the M365 flow: hand back the Microsoft login URL to open next.
+	if status == "redirect" {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":     true,
+			"completed":   false,
+			"status":      "redirect",
+			"redirectUrl": redirectURL,
+		})
+		return
+	}
+
+	h.persistKiroSsoResult(w, result)
+}
+
+// persistKiroSsoResult saves a resolved Kiro SSO credential as an account, reloads
+// the pool, and writes the completed JSON response. Shared by the loopback poll
+// flow and the manual paste flow.
+func (h *Handler) persistKiroSsoResult(w http.ResponseWriter, result *auth.KiroSsoResult) {
 	account := config.Account{
 		ID:            auth.GenerateAccountID(),
 		Email:         result.Email,
@@ -2924,6 +2985,42 @@ func (h *Handler) apiPollAntigravity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.persistAntigravityResult(w, result)
+}
+
+// apiCompleteAntigravity finishes an Antigravity sign-in from a manually pasted
+// callback URL (or bare authorization code). This is the fallback for headless /
+// domain deployments where the admin's browser cannot reach the loopback callback
+// listener on the proxy host: Google redirects to localhost:3129 and the resulting
+// "site can't be reached" page still carries ?code=... in its URL, which the admin
+// copies here. No listener/session is involved; the code is exchanged directly.
+func (h *Handler) apiCompleteAntigravity(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		CallbackURL string `json:"callbackUrl"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(400)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid JSON"})
+		return
+	}
+
+	result, err := auth.CompleteAntigravityManual(req.CallbackURL)
+	if err != nil {
+		w.WriteHeader(400)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	h.persistAntigravityResult(w, result)
+}
+
+// persistAntigravityResult saves a resolved Antigravity credential as an account,
+// reloads the pool, registers the static model list, and writes the JSON response.
+// Shared by the loopback poll flow and the manual paste flow.
+func (h *Handler) persistAntigravityResult(w http.ResponseWriter, result *auth.AntigravityResult) {
 	account := config.Account{
 		ID:           auth.GenerateAccountID(),
 		Email:        result.Email,
@@ -2935,7 +3032,12 @@ func (h *Handler) apiPollAntigravity(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt:    time.Now().Unix() + int64(result.ExpiresIn),
 		AGProjectID:  result.ProjectID,
 		AGTier:       result.Tier,
+		AGTierName:   result.TierName,
+		AGQuota:      result.Quota,
 		AGSessionID:  uuid.New().String(),
+		SubscriptionType:  antigravityTierToSubscription(result.Tier),
+		SubscriptionTitle: result.TierName,
+		LastRefresh:       time.Now().Unix(),
 		Enabled:      true,
 		MachineId:    config.GenerateMachineId(),
 	}
@@ -3619,6 +3721,10 @@ func (h *Handler) apiGetAccountFull(w http.ResponseWriter, r *http.Request, id s
 		"trialUsagePercent": account.TrialUsagePercent,
 		"trialStatus":       account.TrialStatus,
 		"trialExpiresAt":    account.TrialExpiresAt,
+		"agProjectId":       account.AGProjectID,
+		"agTier":            account.AGTier,
+		"agTierName":        account.AGTierName,
+		"agQuota":           account.AGQuota,
 		"requestCount":      stats.RequestCount,
 		"errorCount":        stats.ErrorCount,
 		"totalTokens":       stats.TotalTokens,

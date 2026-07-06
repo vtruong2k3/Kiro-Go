@@ -932,6 +932,43 @@
     });
   }
 
+  function formatAgResetTime(ts) {
+    if (!ts) return '';
+    // resetTime is an RFC3339 timestamp string from Gemini Code Assist.
+    const date = new Date(ts);
+    if (isNaN(date.getTime())) return '';
+    const diffMs = date - new Date();
+    if (diffMs <= 0) return '';
+    const diffH = Math.floor(diffMs / (1000 * 60 * 60));
+    if (diffH < 24) return diffH + t('time.hours');
+    return Math.floor(diffH / 24) + t('time.days');
+  }
+
+  // renderAntigravityQuota renders the per-model quota returned by the Antigravity
+  // Cloud Code :fetchAvailableModels endpoint. Each entry carries a remaining
+  // fraction (0.0-1.0) that drives a small bar per model.
+  function renderAntigravityQuota(a) {
+    const quota = Array.isArray(a.agQuota) ? a.agQuota : [];
+    if (quota.length === 0) return '';
+    const rows = quota.map(b => {
+      const remainPct = Math.max(0, Math.min(100, (b.remainingFraction || 0) * 100));
+      const usedPct = 100 - remainPct;
+      const barClass = remainPct < 10 ? 'critical' : remainPct < 30 ? 'high' : '';
+      const reset = formatAgResetTime(b.resetTime);
+      const resetLabel = reset ? ' · ' + t('antigravity.quotaReset', reset) : '';
+      const label = escapeHtml((b.displayName || b.modelId || '-')) + resetLabel;
+      return '' +
+        '<div class="account-usage">' +
+        '<div class="usage-label">' + label + '</div>' +
+        '<div class="usage-bar"><div class="usage-fill ' + barClass + '" data-usage-pct="' + escapeAttr(usedPct) + '"></div></div>' +
+        '<div class="usage-text"><span>' + escapeHtml(t('antigravity.quotaRemaining')) + '</span><span>' + remainPct.toFixed(0) + '%</span></div>' +
+        '</div>';
+    }).join('');
+    return '<div class="account-usage-group">' +
+      '<div class="usage-label usage-label-group">' + escapeHtml(t('antigravity.quotaTitle')) + '</div>' +
+      rows + '</div>';
+  }
+
   function renderAccounts() {
     const container = $('accountsList');
     if (!container) return;
@@ -999,6 +1036,7 @@
           '<div class="usage-bar"><div class="usage-fill ' + trialClass + '" data-usage-pct="' + escapeAttr(trialPct) + '"></div></div>' +
           '<div class="usage-text"><span>' + (a.trialUsageCurrent != null ? a.trialUsageCurrent.toFixed(1) : 0) + ' / ' + (a.trialUsageLimit != null ? a.trialUsageLimit.toFixed(0) : 0) + '</span><span>' + trialPct.toFixed(1) + '%</span></div>' +
           '</div>' : '') +
+        renderAntigravityQuota(a) +
         '<div class="account-stats">' +
         '<div class="account-stat"><div class="account-stat-value">' + (a.requestCount || 0) + '</div><div class="account-stat-label">' + escapeHtml(t('accounts.requests')) + '</div></div>' +
         '<div class="account-stat"><div class="account-stat-value">' + formatNum(a.totalTokens || 0) + '</div><div class="account-stat-label">' + escapeHtml(t('accounts.tokens')) + '</div></div>' +
@@ -2201,9 +2239,15 @@
       '<button class="btn btn-sm btn-outline flex-1" id="kiroSsoOpenBtn" type="button">' + escapeHtml(t('builderid.open')) + '</button>' +
       '<button class="btn btn-sm btn-outline flex-1" id="kiroSsoCopyBtn" type="button">' + escapeHtml(t('common.copy')) + '</button>' +
       '</div>' +
+      '<div class="form-group mt-3"><label>' + escapeHtml(t('kirosso.callbackUrl')) + '</label>' +
+      '<input type="text" id="kiroSsoCallback" placeholder="http://localhost:3128/signin/callback?..." />' +
+      '<p class="help-block text-xs mt-1">' + escapeHtml(t('kirosso.callbackHint')) + '</p></div>' +
       '</div>' +
       '<p id="kiroSsoStatus" class="text-center text-sm mt-4 muted-text">' + escapeHtml(t('builderid.waiting')) + '</p>' +
-      '<div class="modal-footer"><button class="btn btn-secondary" id="kiroSsoCancelBtn" type="button">' + escapeHtml(t('common.cancel')) + '</button></div>' +
+      '<div class="modal-footer">' +
+      '<button class="btn btn-secondary" id="kiroSsoCancelBtn" type="button">' + escapeHtml(t('common.cancel')) + '</button>' +
+      '<button class="btn btn-primary" id="kiroSsoCompleteBtn" type="button">' + escapeHtml(t('iam.complete')) + '</button>' +
+      '</div>' +
       '</div>';
     $('startKiroSsoBtn').addEventListener('click', startKiroSsoLogin);
   }
@@ -2221,10 +2265,39 @@
         toast(t('common.copied'), 'primary');
       });
       $('kiroSsoCancelBtn').addEventListener('click', cancelKiroSsoLogin);
+      $('kiroSsoCompleteBtn').addEventListener('click', completeKiroSsoManual);
       // Open the sign-in tab immediately (works when the admin panel is viewed on the proxy host).
       window.open(d.signInUrl, '_blank');
       pollKiroSso(d.interval || 2);
     } else toastError(t('common.failed') + ': ' + (d.error || ''));
+  }
+  // completeKiroSsoManual finishes a sign-in from a pasted callback URL — the
+  // fallback when the admin panel is opened from a different host than the proxy
+  // (the loopback localhost:3128 redirect can't reach the server). The M365 flow
+  // has two legs: the first paste returns a redirect URL (Microsoft login) that we
+  // open for the operator to sign in and paste the second callback URL.
+  async function completeKiroSsoManual() {
+    if (!kiroSsoSession) { toastError(t('common.failed')); return; }
+    const callbackUrl = ($('kiroSsoCallback').value || '').trim();
+    if (!callbackUrl) { toastError(t('common.failed') + ': ' + t('kirosso.callbackUrl')); return; }
+    // Stop polling the loopback listener; we are completing manually.
+    if (kiroSsoPollTimer) { clearTimeout(kiroSsoPollTimer); kiroSsoPollTimer = null; }
+    const res = await api('/auth/kiro-sso/complete', { method: 'POST', body: JSON.stringify({ sessionId: kiroSsoSession, callbackUrl }) });
+    const d = await res.json();
+    if (d.completed) {
+      kiroSsoSession = '';
+      closeModal(); loadAccounts(); loadStats();
+      toastPrimary(t('builderid.success') + ': ' + (d.account?.email || d.account?.id));
+      autoRefreshNewAccount(d.account?.id);
+    } else if (d.status === 'redirect' && d.redirectUrl) {
+      // Leg 1 done: open the Microsoft login URL and prompt for the next callback.
+      $('kiroSsoSignInUrl').textContent = d.redirectUrl;
+      $('kiroSsoCallback').value = '';
+      $('kiroSsoStatus').textContent = t('kirosso.pasteSecond');
+      window.open(d.redirectUrl, '_blank');
+    } else {
+      toastError(t('common.failed') + ': ' + (d.error || ''));
+    }
   }
   function pollKiroSso(interval) {
     kiroSsoPollTimer = setTimeout(async () => {
@@ -2277,7 +2350,13 @@
       '</div>' +
       '</div>' +
       '<p id="antigravityStatus" class="text-center text-sm mt-4 muted-text">' + escapeHtml(t('builderid.waiting')) + '</p>' +
-      '<div class="modal-footer"><button class="btn btn-secondary" id="antigravityCancelBtn" type="button">' + escapeHtml(t('common.cancel')) + '</button></div>' +
+      '<div class="form-group mt-3"><label>' + escapeHtml(t('antigravity.callbackUrl')) + '</label>' +
+      '<input type="text" id="antigravityCallback" placeholder="http://localhost:3129/callback?code=..." />' +
+      '<p class="help-block text-xs mt-1">' + escapeHtml(t('antigravity.callbackHint')) + '</p></div>' +
+      '<div class="modal-footer">' +
+      '<button class="btn btn-secondary" id="antigravityCancelBtn" type="button">' + escapeHtml(t('common.cancel')) + '</button>' +
+      '<button class="btn btn-primary" id="antigravityCompleteBtn" type="button">' + escapeHtml(t('iam.complete')) + '</button>' +
+      '</div>' +
       '</div>';
     $('startAntigravityBtn').addEventListener('click', startAntigravityLogin);
   }
@@ -2295,9 +2374,29 @@
         toast(t('common.copied'), 'primary');
       });
       $('antigravityCancelBtn').addEventListener('click', cancelAntigravityLogin);
+      $('antigravityCompleteBtn').addEventListener('click', completeAntigravityManual);
       window.open(d.signInUrl, '_blank');
       pollAntigravity(d.interval || 2);
     } else toastError(t('common.failed') + ': ' + (d.error || ''));
+  }
+  async function completeAntigravityManual() {
+    const callbackUrl = ($('antigravityCallback').value || '').trim();
+    if (!callbackUrl) { toastError(t('common.failed') + ': ' + t('antigravity.callbackUrl')); return; }
+    // Stop polling the loopback listener; we are completing manually.
+    if (antigravityPollTimer) { clearTimeout(antigravityPollTimer); antigravityPollTimer = null; }
+    $('antigravityStatus').textContent = t('builderid.waiting');
+    const res = await api('/auth/antigravity/complete', { method: 'POST', body: JSON.stringify({ callbackUrl }) });
+    const d = await res.json();
+    if (d.completed) {
+      antigravitySession = '';
+      closeModal(); loadAccounts(); loadStats();
+      toastPrimary(t('builderid.success') + ': ' + (d.account?.email || d.account?.id));
+      autoRefreshNewAccount(d.account?.id);
+    } else {
+      toastError(t('common.failed') + ': ' + (d.error || ''));
+      // Keep the session/poll alive so the operator can retry.
+      pollAntigravity(2);
+    }
   }
   function pollAntigravity(interval) {
     antigravityPollTimer = setTimeout(async () => {

@@ -31,6 +31,7 @@ import (
 	"net/url"
 	"os"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -45,6 +46,7 @@ const (
 
 	agLoadCodeAssistURL = "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist"
 	agOnboardUserURL    = "https://cloudcode-pa.googleapis.com/v1internal:onboardUser"
+	agFetchModelsURL    = "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels"
 
 	// Headers the real Antigravity binary sends on the bootstrap calls.
 	agLoadCodeAssistUserAgent = "google-api-nodejs-client/9.15.1"
@@ -125,7 +127,9 @@ type AntigravityResult struct {
 	Email        string
 	ProjectID    string
 	Tier         string
+	TierName     string
 	Scopes       string
+	Quota        []config.AGQuotaBucket
 }
 
 var (
@@ -191,8 +195,13 @@ func StartAntigravityLogin() (*AntigravitySession, string, error) {
 		resultCh:  make(chan antigravityCapture, 1),
 	}
 
+	// Binding the loopback listener is best-effort. It enables the automatic
+	// callback capture when the admin panel runs on the proxy host, but on a
+	// remote/domain deployment the operator completes via the manual paste flow
+	// (CompleteAntigravityManual), which needs no listener. A bind failure (e.g.
+	// port 3129 still held by an abandoned session) must not block sign-in.
 	if err := session.startListener(); err != nil {
-		return nil, "", err
+		logger.Warnf("[Antigravity] callback listener not bound (manual paste still works): %v", err)
 	}
 
 	params := url.Values{}
@@ -246,6 +255,55 @@ func PollAntigravityAuth(sessionID string) (*AntigravityResult, string, error) {
 	}
 }
 
+// CompleteAntigravityManual finishes a sign-in from a pasted callback URL (or a
+// bare authorization code). This is the headless/domain-deployment path: the
+// OAuth redirect targets the fixed loopback localhost:3129, which a remote
+// operator's browser cannot reach, so the browser lands on an error page whose
+// address bar still carries ?code=... The operator pastes that URL (or just the
+// code) here and the code is exchanged + bootstrapped without any listener.
+//
+// No session/state check applies (there is no live session); anti-CSRF state is
+// irrelevant because the operator is copying a value from their own browser.
+func CompleteAntigravityManual(rawInput string) (*AntigravityResult, error) {
+	code := extractAntigravityCode(rawInput)
+	if code == "" {
+		return nil, fmt.Errorf("no authorization code found in the pasted value")
+	}
+
+	s := &AntigravitySession{ProxyURL: config.GetProxyURL()}
+	result, _, err := s.bootstrap(code)
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// extractAntigravityCode pulls the OAuth "code" out of a pasted value. It accepts
+// a full callback URL (http://localhost:3129/callback?code=...&state=...), a bare
+// "code=..." query fragment, or the raw code itself.
+func extractAntigravityCode(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	// Full URL or anything with a query string.
+	if u, err := url.Parse(raw); err == nil {
+		if c := strings.TrimSpace(u.Query().Get("code")); c != "" {
+			return c
+		}
+	}
+	// A bare "code=...&..." fragment without a scheme.
+	if strings.Contains(raw, "code=") {
+		if q, err := url.ParseQuery(strings.TrimPrefix(raw, "?")); err == nil {
+			if c := strings.TrimSpace(q.Get("code")); c != "" {
+				return c
+			}
+		}
+	}
+	// Assume the operator pasted just the code.
+	return raw
+}
+
 // CancelAntigravityLogin tears an in-flight session down immediately.
 func CancelAntigravityLogin(sessionID string) {
 	agSessionsMu.RLock()
@@ -270,7 +328,7 @@ func (s *AntigravitySession) bootstrap(code string) (*AntigravityResult, string,
 
 	email := getAntigravityUserInfo(client, accessToken)
 
-	projectID, tier, err := loadAntigravityCodeAssist(client, accessToken)
+	projectID, tier, tierName, err := loadAntigravityCodeAssist(client, accessToken)
 	if err != nil {
 		return nil, "", fmt.Errorf("loadCodeAssist failed: %w", err)
 	}
@@ -290,6 +348,13 @@ func (s *AntigravitySession) bootstrap(code string) (*AntigravityResult, string,
 		scope = strings.Join(agScopes, " ")
 	}
 
+	// Per-model quota is best-effort: some accounts / projects don't expose it and
+	// a failure here must not fail the sign-in.
+	quota, quotaErr := RetrieveAntigravityQuota(client, accessToken, finalProject)
+	if quotaErr != nil {
+		logger.Debugf("[Antigravity] retrieveUserQuota failed for %s: %v", email, quotaErr)
+	}
+
 	return &AntigravityResult{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
@@ -297,7 +362,9 @@ func (s *AntigravitySession) bootstrap(code string) (*AntigravityResult, string,
 		Email:        email,
 		ProjectID:    finalProject,
 		Tier:         tier,
+		TierName:     tierName,
 		Scopes:       scope,
+		Quota:        quota,
 	}, "completed", nil
 }
 
@@ -371,47 +438,153 @@ func agBootstrapHeaders(req *http.Request, accessToken string) {
 	req.Header.Set("Client-Metadata", agClientMetadataJSON())
 }
 
-// loadAntigravityCodeAssist resolves the real GCP project id and default tier.
-func loadAntigravityCodeAssist(client *http.Client, accessToken string) (projectID, tier string, err error) {
+// loadAntigravityCodeAssist resolves the real GCP project id and the account's
+// current tier. It prefers currentTier (the tier the account is actually on) over
+// the allowedTiers default, so a paid/standard account is not misreported as free.
+func loadAntigravityCodeAssist(client *http.Client, accessToken string) (projectID, tier, tierName string, err error) {
 	payload := map[string]interface{}{"metadata": agClientMetadata()}
 	body, _ := json.Marshal(payload)
 
 	req, err := http.NewRequest(http.MethodPost, agLoadCodeAssistURL, strings.NewReader(string(body)))
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	agBootstrapHeaders(req, accessToken)
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
+		return "", "", "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
 	}
 
+	type agTierObj struct {
+		ID        string `json:"id"`
+		Name      string `json:"name"`
+		IsDefault bool   `json:"isDefault"`
+	}
 	var out struct {
 		CloudaicompanionProject json.RawMessage `json:"cloudaicompanionProject"`
-		AllowedTiers            []struct {
-			ID        string `json:"id"`
-			IsDefault bool   `json:"isDefault"`
-		} `json:"allowedTiers"`
+		CurrentTier             *agTierObj      `json:"currentTier"`
+		AllowedTiers            []agTierObj     `json:"allowedTiers"`
 	}
 	if err := json.Unmarshal(respBody, &out); err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 
 	projectID = parseAntigravityProject(out.CloudaicompanionProject)
+
+	// 1) currentTier is authoritative — it is the tier the account is on now.
+	if out.CurrentTier != nil && strings.TrimSpace(out.CurrentTier.ID) != "" {
+		tier = strings.TrimSpace(out.CurrentTier.ID)
+		tierName = strings.TrimSpace(out.CurrentTier.Name)
+		return projectID, tier, tierName, nil
+	}
+	// 2) Fall back to the default allowed tier.
 	tier = agDefaultTierID
 	for _, t := range out.AllowedTiers {
 		if t.IsDefault && strings.TrimSpace(t.ID) != "" {
 			tier = strings.TrimSpace(t.ID)
+			tierName = strings.TrimSpace(t.Name)
 			break
 		}
 	}
-	return projectID, tier, nil
+	return projectID, tier, tierName, nil
+}
+
+// RetrieveAntigravityQuota fetches per-model quota from the Antigravity Cloud Code
+// :fetchAvailableModels endpoint. Best-effort: some accounts/projects do not expose
+// quota and return an error or empty list, which callers must tolerate.
+//
+// NOTE: Antigravity uses :fetchAvailableModels (NOT the Gemini CLI :retrieveUserQuota
+// endpoint). The response is {"models": {"<modelId>": {"quotaInfo": {remainingFraction,
+// resetTime}, "displayName", "isInternal"}}} — a map keyed by model id, so each entry
+// becomes one config.AGQuotaBucket.
+func RetrieveAntigravityQuota(client *http.Client, accessToken, projectID string) ([]config.AGQuotaBucket, error) {
+	payload := map[string]interface{}{}
+	if p := strings.TrimSpace(projectID); p != "" {
+		payload["project"] = p
+	}
+	body, _ := json.Marshal(payload)
+
+	req, err := http.NewRequest(http.MethodPost, agFetchModelsURL, strings.NewReader(string(body)))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("User-Agent", fmt.Sprintf("antigravity/%s %s/%s", "1.107.0", runtime.GOOS, runtime.GOARCH))
+	req.Header.Set("X-Client-Name", "antigravity")
+	req.Header.Set("X-Client-Version", "1.107.0")
+	req.Header.Set("x-request-source", "local")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	// Upstream shape: {"models": {"<modelId>": {"quotaInfo": {...}, ...}}}
+	var out struct {
+		Models map[string]struct {
+			DisplayName string `json:"displayName"`
+			IsInternal  bool   `json:"isInternal"`
+			QuotaInfo   *struct {
+				RemainingFraction float64 `json:"remainingFraction"`
+				ResetTime         string  `json:"resetTime"`
+			} `json:"quotaInfo"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(respBody, &out); err != nil {
+		return nil, err
+	}
+
+	buckets := make([]config.AGQuotaBucket, 0, len(out.Models))
+	for modelID, info := range out.Models {
+		if info.QuotaInfo == nil || info.IsInternal {
+			continue
+		}
+		label := strings.TrimSpace(info.DisplayName)
+		if label == "" {
+			label = modelID
+		}
+		buckets = append(buckets, config.AGQuotaBucket{
+			ModelID:       modelID,
+			DisplayName:   label,
+			RemainingFrac: info.QuotaInfo.RemainingFraction,
+			ResetTime:     strings.TrimSpace(info.QuotaInfo.ResetTime),
+		})
+	}
+	// Stable order (map iteration is random) so the UI does not reshuffle each refresh.
+	sort.Slice(buckets, func(i, j int) bool { return buckets[i].ModelID < buckets[j].ModelID })
+	return buckets, nil
+}
+
+// RefreshAntigravityAccount re-resolves an existing account's tier and per-model
+// quota from cloudcode-pa (loadCodeAssist + retrieveUserQuota). Unlike bootstrap it
+// does not re-run onboarding. Used by the periodic/manual account-info refresh.
+// Quota is best-effort: a retrieveUserQuota failure returns nil quota, not an error.
+func RefreshAntigravityAccount(client *http.Client, accessToken, projectID string) (resolvedProject, tier, tierName string, quota []config.AGQuotaBucket, err error) {
+	resolvedProject, tier, tierName, err = loadAntigravityCodeAssist(client, accessToken)
+	if err != nil {
+		return "", "", "", nil, err
+	}
+	if resolvedProject == "" {
+		resolvedProject = strings.TrimSpace(projectID)
+	}
+
+	quota, quotaErr := RetrieveAntigravityQuota(client, accessToken, resolvedProject)
+	if quotaErr != nil {
+		logger.Debugf("[Antigravity] retrieveUserQuota failed during refresh: %v", quotaErr)
+	}
+	return resolvedProject, tier, tierName, quota, nil
 }
 
 // onboardAntigravityUser polls onboardUser until done, returning the final project id.

@@ -67,8 +67,13 @@ type Account struct {
 	// Google uses a single hardcoded public OAuth client (see auth/antigravity.go),
 	// so ClientID/ClientSecret are not per-account for this provider.
 	AGProjectID string `json:"agProjectId,omitempty"` // cloudaicompanionProject (real GCP project id, anti-abuse)
-	AGTier      string `json:"agTier,omitempty"`      // resolved tier id from loadCodeAssist/onboardUser
+	AGTier      string `json:"agTier,omitempty"`      // resolved tier id from loadCodeAssist/onboardUser (currentTier.id)
+	AGTierName  string `json:"agTierName,omitempty"`  // human-readable tier name (currentTier.name)
 	AGSessionID string `json:"agSessionId,omitempty"` // stable X-Machine-Session-Id for this account
+
+	// AGQuota holds the per-model quota buckets from cloudcode-pa :retrieveUserQuota.
+	// Refreshed alongside subscription info; empty for non-Antigravity accounts.
+	AGQuota []AGQuotaBucket `json:"agQuota,omitempty"`
 
 	// Per-account outbound proxy (falls back to global ProxyURL if empty)
 	ProxyURL string `json:"proxyURL,omitempty"`
@@ -229,6 +234,18 @@ type Config struct {
 	TotalCredits    float64 `json:"totalCredits,omitempty"`    // Total credits consumed
 }
 
+// AGQuotaBucket is one per-model quota entry from the Antigravity Cloud Code
+// :fetchAvailableModels endpoint, normalized for persistence and the admin API.
+// The upstream response is a map keyed by model id whose values carry a
+// quotaInfo{remainingFraction, resetTime}; decoding happens in auth/antigravity.go
+// and the values are copied here.
+type AGQuotaBucket struct {
+	ModelID       string  `json:"modelId,omitempty"`
+	DisplayName   string  `json:"displayName,omitempty"`
+	RemainingFrac float64 `json:"remainingFraction,omitempty"` // 0.0-1.0 fraction of quota left
+	ResetTime     string  `json:"resetTime,omitempty"`
+}
+
 // AccountInfo contains account metadata retrieved from Kiro API.
 // Used for updating subscription and usage information.
 type AccountInfo struct {
@@ -247,6 +264,11 @@ type AccountInfo struct {
 	TrialUsagePercent float64
 	TrialStatus       string
 	TrialExpiresAt    int64
+
+	// Antigravity-only fields (populated by the Antigravity refresh path).
+	AGTier     string
+	AGTierName string
+	AGQuota    []AGQuotaBucket
 }
 
 // Version current version
@@ -684,6 +706,17 @@ func UpdateAccountInfo(id string, info AccountInfo) error {
 			cfg.Accounts[i].TrialUsagePercent = info.TrialUsagePercent
 			cfg.Accounts[i].TrialStatus = info.TrialStatus
 			cfg.Accounts[i].TrialExpiresAt = info.TrialExpiresAt
+			// Antigravity: tier id/name resolve at login but the refresh path
+			// re-reads them from currentTier; quota is only ever set here.
+			if info.AGTier != "" {
+				cfg.Accounts[i].AGTier = info.AGTier
+			}
+			if info.AGTierName != "" {
+				cfg.Accounts[i].AGTierName = info.AGTierName
+			}
+			if info.AGQuota != nil {
+				cfg.Accounts[i].AGQuota = info.AGQuota
+			}
 			return Save()
 		}
 	}

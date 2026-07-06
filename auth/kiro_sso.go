@@ -240,6 +240,100 @@ func PollKiroSsoAuth(sessionID string) (*KiroSsoResult, string, error) {
 	}
 }
 
+// CompleteKiroSsoManual finishes a sign-in from a manually pasted callback URL.
+// This is the headless / domain-deployment path: the OAuth redirects target the
+// fixed loopback localhost:3128, which a remote operator's browser cannot reach,
+// so the browser lands on a "site can't be reached" page whose address bar still
+// carries the callback query. The operator copies that URL and pastes it here.
+//
+// The M365 (external IdP) flow has two legs, so this may be called twice for one
+// sign-in:
+//   - First paste: the portal's /signin/callback?login_option=external_idp&... URL.
+//     Returns status "redirect" plus nextURL — the Microsoft login URL the operator
+//     must open next. (For a social login there is no second leg; it completes here.)
+//   - Second paste: the /oauth/callback?code=...&state=... URL Microsoft redirected
+//     to. Returns status "completed" with the resolved credential.
+//
+// It drives the same handleCallback state machine the loopback listener uses, so
+// the OIDC issuer allow-list and anti-CSRF state matching are enforced identically.
+func CompleteKiroSsoManual(sessionID, callbackURL string) (*KiroSsoResult, string, string, error) {
+	kiroSsoSessionsMu.RLock()
+	session, ok := kiroSsoSessions[sessionID]
+	kiroSsoSessionsMu.RUnlock()
+	if !ok {
+		return nil, "", "", fmt.Errorf("session not found or expired")
+	}
+	if time.Now().After(session.ExpiresAt) {
+		session.close()
+		removeKiroSsoSession(sessionID)
+		return nil, "", "", fmt.Errorf("SSO login timed out after %s", kiroSsoLoginTimeout)
+	}
+
+	callbackURL = strings.TrimSpace(callbackURL)
+	if callbackURL == "" {
+		return nil, "", "", fmt.Errorf("no callback URL provided")
+	}
+	// Accept a full URL or a bare "?..."/"login_option=..." query fragment by
+	// normalizing to the fixed loopback origin the state machine expects.
+	if !strings.Contains(callbackURL, "://") {
+		callbackURL = kiroRedirectURI + "/" + strings.TrimLeft(callbackURL, "/")
+	}
+	req, err := http.NewRequest(http.MethodGet, callbackURL, nil)
+	if err != nil {
+		return nil, "", "", fmt.Errorf("invalid callback URL: %w", err)
+	}
+
+	rec := &kiroCaptureRecorder{header: make(http.Header)}
+	session.handleCallback(rec, req)
+
+	// Leg-1 (external IdP descriptor): the state machine 302's to the Microsoft
+	// login URL. Hand that URL back so the operator opens it and pastes leg-2.
+	if loc := rec.header.Get("Location"); loc != "" && rec.status == http.StatusFound {
+		return nil, "redirect", loc, nil
+	}
+
+	// Otherwise a capture (social code, leg-2 code, or an error) was delivered.
+	select {
+	case capture := <-session.resultCh:
+		session.close()
+		removeKiroSsoSession(sessionID)
+		if capture.err != nil {
+			return nil, "", "", capture.err
+		}
+		result, status, exErr := session.exchange(capture)
+		if exErr != nil {
+			return nil, "", "", exErr
+		}
+		return result, status, "", nil
+	default:
+		// No redirect and no capture: the pasted URL didn't match this session
+		// (wrong state, missing code, or a stray hit the state machine ignored).
+		return nil, "", "", fmt.Errorf("the pasted callback URL did not match this sign-in (missing code or wrong state) — copy the full URL from the browser address bar")
+	}
+}
+
+// kiroCaptureRecorder is a minimal http.ResponseWriter used to drive
+// handleCallback from CompleteKiroSsoManual. It records only the status code and
+// headers (to detect the leg-1 302 redirect and read its Location); the HTML body
+// handleCallback writes is discarded.
+type kiroCaptureRecorder struct {
+	header http.Header
+	status int
+}
+
+func (r *kiroCaptureRecorder) Header() http.Header { return r.header }
+func (r *kiroCaptureRecorder) Write(b []byte) (int, error) {
+	if r.status == 0 {
+		r.status = http.StatusOK
+	}
+	return len(b), nil
+}
+func (r *kiroCaptureRecorder) WriteHeader(status int) {
+	if r.status == 0 {
+		r.status = status
+	}
+}
+
 // exchange swaps a captured authorization code for tokens and assembles the
 // resolved credential.
 func (s *KiroSsoSession) exchange(capture kiroSsoCapture) (*KiroSsoResult, string, error) {
