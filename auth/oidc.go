@@ -39,6 +39,16 @@ func RefreshToken(account *config.Account) (string, string, int64, string, error
 		return RefreshAntigravityToken(account, client)
 	}
 
+	// Grok Build OAuth accounts refresh against the xAI token endpoint
+	// (refresh_token grant, public PKCE client). API-key Grok accounts have no
+	// refresh token and never reach here (ensureValidToken short-circuits them).
+	// xAI issues no profileArn, so "" is returned for it.
+	if account.RefreshToken != "" && (account.AuthMethod == "grok" || account.AuthMethod == "grok-oauth" ||
+		strings.EqualFold(account.Provider, "grok") || strings.EqualFold(account.Provider, "xai")) {
+		accessToken, refreshToken, expiresAt, err := RefreshXaiToken(account, client)
+		return accessToken, refreshToken, expiresAt, "", err
+	}
+
 	// External IdP (enterprise SSO, e.g. Azure AD) tokens are refreshed against the
 	// IdP token endpoint (refresh_token grant, public client), NOT the AWS SSO OIDC
 	// endpoint. Selecting it on AuthMethod (rather than letting it fall through to the

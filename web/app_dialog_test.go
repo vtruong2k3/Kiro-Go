@@ -1,6 +1,5 @@
-// Feature: microsoft-365-sso
-//
-// Example tests for MS365 dialog composition in the modern panel (web/app.js).
+// Example tests for add-account dialog composition in the modern panel
+// (web/app.js).
 //
 // Kiro-Go is primarily a Go project with no JavaScript test harness (no
 // package.json, node_modules, or jest/vitest config). web/app.js is a single
@@ -9,11 +8,12 @@
 // how the rest of this repo validates behavior (Go's testing package), these
 // example tests assert the dialog-composition contract at the source level:
 //
-//   - modalAdd renders exactly seven methodCard(...) entries, one of which is
-//     the MS365 method (Requirement 1.1).
-//   - showModal routes the 'ms365' type to modalMs365, and modalMs365 replaces
-//     modalBody.innerHTML with the MS365 login view, so selecting MS365 after
-//     another method's view is shown swaps in the MS365 view (Requirement 1.4).
+//   - modalAdd renders one methodCard(...) entry per supported login method,
+//     including the Kiro-hosted enterprise SSO method that replaced the older
+//     MS365-specific flow.
+//   - showModal routes the 'enterprisesso' type to modalEnterpriseSso, and
+//     modalEnterpriseSso replaces modalBody.innerHTML with its login view, so
+//     selecting it after another method's view is shown swaps in the SSO view.
 package web
 
 import (
@@ -22,6 +22,21 @@ import (
 	"strings"
 	"testing"
 )
+
+// addMethodCards is the set of login methods the add dialog must offer. It is
+// the source of truth for the method-card contract test below; add a method
+// here when a new methodCard(...) is wired into modalAdd.
+var addMethodCards = []string{
+	"builderid",
+	"iam",
+	"sso",
+	"local",
+	"credentials",
+	"cookie",
+	"enterprisesso",
+	"antigravity",
+	"grok",
+}
 
 // readAppJS returns the contents of web/app.js relative to this test's package
 // directory.
@@ -65,21 +80,14 @@ func extractFunctionBody(t *testing.T, src, name string) string {
 	return ""
 }
 
-// TestModalAddRendersSevenMethodCardsIncludingMs365 verifies Requirement 1.1:
-// the add dialog offers seven selectable login methods and MS365 is one of them.
-func TestModalAddRendersSevenMethodCardsIncludingMs365(t *testing.T) {
+// TestModalAddRendersAllMethodCards verifies the add dialog offers exactly the
+// expected set of selectable login methods, with no duplicates and nothing
+// unexpected.
+func TestModalAddRendersAllMethodCards(t *testing.T) {
 	body := extractFunctionBody(t, readAppJS(t), "modalAdd")
 
 	methodCall := regexp.MustCompile(`methodCard\(\s*'([^']+)'`)
 	matches := methodCall.FindAllStringSubmatch(body, -1)
-
-	if len(matches) != 7 {
-		got := make([]string, 0, len(matches))
-		for _, m := range matches {
-			got = append(got, m[1])
-		}
-		t.Fatalf("expected 7 methodCard entries in modalAdd, got %d: %v", len(matches), got)
-	}
 
 	seen := make(map[string]bool, len(matches))
 	for _, m := range matches {
@@ -89,43 +97,51 @@ func TestModalAddRendersSevenMethodCardsIncludingMs365(t *testing.T) {
 		seen[m[1]] = true
 	}
 
-	// The six pre-existing methods must remain (Requirement 8.1) alongside MS365.
-	for _, want := range []string{"builderid", "iam", "sso", "local", "credentials", "cookie", "ms365"} {
+	if len(matches) != len(addMethodCards) {
+		got := make([]string, 0, len(matches))
+		for _, m := range matches {
+			got = append(got, m[1])
+		}
+		t.Fatalf("expected %d methodCard entries in modalAdd, got %d: %v", len(addMethodCards), len(matches), got)
+	}
+
+	for _, want := range addMethodCards {
 		if !seen[want] {
 			t.Errorf("modalAdd is missing method card %q", want)
 		}
 	}
 }
 
-// TestShowModalRoutesMs365ToLoginView verifies Requirement 1.4: selecting the
-// MS365 method routes to modalMs365, which replaces the shared modal body with
-// the MS365 login view (so a previously shown method view is swapped out).
-func TestShowModalRoutesMs365ToLoginView(t *testing.T) {
+// TestShowModalRoutesEnterpriseSsoToLoginView verifies that selecting the
+// enterprise SSO method routes to modalEnterpriseSso, which replaces the shared
+// modal body with its login view (so a previously shown method view is swapped
+// out).
+func TestShowModalRoutesEnterpriseSsoToLoginView(t *testing.T) {
 	src := readAppJS(t)
 
-	// showModal dispatches the 'ms365' type to modalMs365.
+	// showModal dispatches the 'enterprisesso' type to modalEnterpriseSso.
 	showModal := extractFunctionBody(t, src, "showModal")
-	routeRe := regexp.MustCompile(`type\s*===\s*'ms365'\s*\)\s*modalMs365\(`)
+	routeRe := regexp.MustCompile(`type\s*===\s*'enterprisesso'\s*\)\s*modalEnterpriseSso\(`)
 	if !routeRe.MatchString(showModal) {
-		t.Fatalf("showModal does not route 'ms365' to modalMs365; body:\n%s", showModal)
+		t.Fatalf("showModal does not route 'enterprisesso' to modalEnterpriseSso; body:\n%s", showModal)
 	}
 
-	// modalMs365 replaces the shared body content (rather than appending),
-	// which is what makes the previously shown method view disappear.
-	modalMs365 := extractFunctionBody(t, src, "modalMs365")
-	if !regexp.MustCompile(`body\.innerHTML\s*=`).MatchString(modalMs365) {
-		t.Fatalf("modalMs365 does not overwrite body.innerHTML; body:\n%s", modalMs365)
+	// modalEnterpriseSso replaces the shared body content (rather than
+	// appending), which is what makes the previously shown method view disappear.
+	modalSso := extractFunctionBody(t, src, "modalEnterpriseSso")
+	if !regexp.MustCompile(`body\.innerHTML\s*=`).MatchString(modalSso) {
+		t.Fatalf("modalEnterpriseSso does not overwrite body.innerHTML; body:\n%s", modalSso)
 	}
 
-	// The rendered content is the MS365 login view: it must present the MS365
+	// The rendered content is the Kiro-hosted SSO login view: it must present the
 	// start-login control that is unique to this view.
-	if !strings.Contains(modalMs365, "ms365StartBtn") {
-		t.Errorf("modalMs365 does not render the MS365 start-login control (ms365StartBtn)")
+	if !strings.Contains(modalSso, "startKiroSsoBtn") {
+		t.Errorf("modalEnterpriseSso does not render the SSO start-login control (startKiroSsoBtn)")
 	}
 
-	// Sanity: the MS365 view must not be an accidental copy of another method's
+	// Sanity: the SSO view must not be an accidental copy of another method's
 	// view — assert it does not render another method's unique start control.
-	if strings.Contains(modalMs365, "iamStartBtn") || strings.Contains(modalMs365, "builderIdStartBtn") {
-		t.Errorf("modalMs365 unexpectedly contains another method's login controls")
+	if strings.Contains(modalSso, "iamStartBtn") || strings.Contains(modalSso, "builderIdStartBtn") {
+		t.Errorf("modalEnterpriseSso unexpectedly contains another method's login controls")
 	}
 }

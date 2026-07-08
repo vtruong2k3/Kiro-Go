@@ -598,6 +598,14 @@ func (h *Handler) refreshModelsCache() {
 			continue
 		}
 
+		// Grok / xAI accounts use a static model catalog.
+		if isGrokAccount(account) {
+			modelIDs := grokModelIDs()
+			h.pool.SetModelList(account.ID, modelIDs)
+			aggregated = mergeUniqueModels(aggregated, grokModelInfos())
+			continue
+		}
+
 		models, err := ListAvailableModels(account)
 		if err != nil {
 			logger.Warnf("[ModelsCache] Failed to refresh for %s: %v", account.Email, err)
@@ -638,6 +646,18 @@ func (h *Handler) fetchAndCacheAccountModels(account *config.Account) error {
 		h.modelsCacheTime = time.Now().Unix()
 		h.modelsCacheMu.Unlock()
 		logger.Infof("[ModelsCache] Registered %d Antigravity models for account %s", len(agModels), account.Email)
+		return nil
+	}
+
+	// Grok / xAI accounts use a static model catalog.
+	if isGrokAccount(account) {
+		h.pool.SetModelList(account.ID, grokModelIDs())
+		gModels := grokModelInfos()
+		h.modelsCacheMu.Lock()
+		h.cachedModels = mergeUniqueModels(h.cachedModels, gModels)
+		h.modelsCacheTime = time.Now().Unix()
+		h.modelsCacheMu.Unlock()
+		logger.Infof("[ModelsCache] Registered %d Grok models for account %s", len(gModels), account.Email)
 		return nil
 	}
 
@@ -2123,6 +2143,12 @@ func (h *Handler) sendOpenAIError(w http.ResponseWriter, status int, errType, me
 
 // ensureValidToken 确保 token 有效
 func (h *Handler) ensureValidToken(account *config.Account) error {
+	if isGrokAccount(account) && account.RefreshToken == "" {
+		// Grok API-key accounts use a static key with no refresh token, so there
+		// is nothing to refresh. Grok Build OAuth accounts DO carry a refresh
+		// token and fall through to the normal expiry-based refresh below.
+		return nil
+	}
 	if account.ExpiresAt == 0 || time.Now().Unix() < account.ExpiresAt-tokenRefreshSkewSeconds {
 		return nil
 	}
@@ -2245,6 +2271,14 @@ func (h *Handler) handleAdminAPI(w http.ResponseWriter, r *http.Request) {
 		h.apiCancelAntigravity(w, r)
 	case path == "/auth/antigravity/complete" && r.Method == "POST":
 		h.apiCompleteAntigravity(w, r)
+	case path == "/auth/grok/start" && r.Method == "POST":
+		h.apiStartGrok(w, r)
+	case path == "/auth/grok/poll" && r.Method == "POST":
+		h.apiPollGrok(w, r)
+	case path == "/auth/grok/cancel" && r.Method == "POST":
+		h.apiCancelGrok(w, r)
+	case path == "/auth/grok/complete" && r.Method == "POST":
+		h.apiCompleteGrok(w, r)
 	case path == "/auth/builderid/start" && r.Method == "POST":
 		h.apiStartBuilderIdLogin(w, r)
 	case path == "/auth/builderid/poll" && r.Method == "POST":
@@ -2396,13 +2430,20 @@ func (h *Handler) apiAddAccount(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.pool.Reload()
-	// 新账号若已启用且有 token，立即拉取并缓存模型列表
-	if account.Enabled && account.AccessToken != "" {
-		go func(acc config.Account) {
-			if err := h.fetchAndCacheAccountModels(&acc); err != nil {
-				logger.Warnf("[ModelsCache] Auto-refresh failed for new account %s: %v", acc.Email, err)
-			}
-		}(account)
+	// New account: immediately register models for providers that use static lists
+	// (Grok, Antigravity) even if they have no AccessToken.
+	if account.Enabled {
+		shouldRefresh := account.AccessToken != "" ||
+			isAntigravityAccount(&account) ||
+			isGrokAccount(&account)
+
+		if shouldRefresh {
+			go func(acc config.Account) {
+				if err := h.fetchAndCacheAccountModels(&acc); err != nil {
+					logger.Warnf("[ModelsCache] Auto-refresh failed for new account %s: %v", acc.Email, err)
+				}
+			}(account)
+		}
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "id": account.ID})
 }
@@ -3061,6 +3102,143 @@ func (h *Handler) persistAntigravityResult(w http.ResponseWriter, result *auth.A
 			"email":      account.Email,
 			"authMethod": account.AuthMethod,
 			"projectId":  account.AGProjectID,
+		},
+	})
+}
+
+// apiStartGrok starts the Grok Build (xAI) OAuth sign-in. It binds the loopback
+// callback listener on 127.0.0.1:56121 and returns the xAI consent URL the
+// operator opens in a browser ON THE SAME HOST as the proxy. The front end polls
+// /auth/grok/poll until done.
+func (h *Handler) apiStartGrok(w http.ResponseWriter, r *http.Request) {
+	session, authURL, err := auth.StartXaiLogin()
+	if err != nil {
+		w.WriteHeader(500)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"sessionId": session.ID,
+		"signInUrl": authURL,
+		"interval":  2,
+	})
+}
+
+// apiCancelGrok tears down an in-flight Grok OAuth sign-in, freeing the loopback
+// callback port immediately.
+func (h *Handler) apiCancelGrok(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SessionID string `json:"sessionId"`
+	}
+	json.NewDecoder(r.Body).Decode(&req)
+	if req.SessionID != "" {
+		auth.CancelXaiLogin(req.SessionID)
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
+}
+
+// apiPollGrok reports the Grok OAuth sign-in status. Once the listener captures
+// the authorization code it exchanges it for tokens, persists the account
+// (AuthMethod "grok"), registers the static model list, and returns completed=true.
+func (h *Handler) apiPollGrok(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SessionID string `json:"sessionId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(400)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid JSON"})
+		return
+	}
+
+	result, status, err := auth.PollXaiAuth(req.SessionID)
+	if err != nil {
+		w.WriteHeader(400)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	if status == "pending" {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":   true,
+			"completed": false,
+			"status":    "pending",
+		})
+		return
+	}
+
+	h.persistGrokResult(w, result)
+}
+
+// apiCompleteGrok finishes a Grok OAuth sign-in from a manually pasted callback
+// URL (or bare authorization code). This is the fallback for headless / domain
+// deployments where the admin's browser cannot reach the loopback listener: xAI
+// redirects to 127.0.0.1:56121 and the resulting error page still carries
+// ?code=... in its URL. The sessionId is required to recover the PKCE verifier.
+func (h *Handler) apiCompleteGrok(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SessionID   string `json:"sessionId"`
+		CallbackURL string `json:"callbackUrl"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(400)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid JSON"})
+		return
+	}
+
+	result, err := auth.CompleteXaiManual(req.SessionID, req.CallbackURL)
+	if err != nil {
+		w.WriteHeader(400)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	h.persistGrokResult(w, result)
+}
+
+// persistGrokResult saves a resolved Grok OAuth credential as an account, reloads
+// the pool, registers the static model list, and writes the JSON response. Shared
+// by the loopback poll flow and the manual paste flow.
+func (h *Handler) persistGrokResult(w http.ResponseWriter, result *auth.XaiResult) {
+	account := config.Account{
+		ID:           auth.GenerateAccountID(),
+		Email:        result.Email,
+		AccessToken:  result.AccessToken,
+		RefreshToken: result.RefreshToken,
+		AuthMethod:   "grok",
+		Provider:     "grok",
+		GrokAuthType: "oauth",
+		Scopes:       result.Scopes,
+		ExpiresAt:    time.Now().Unix() + int64(result.ExpiresIn),
+		SubscriptionType: "PRO",
+		LastRefresh:  time.Now().Unix(),
+		Enabled:      true,
+		MachineId:    config.GenerateMachineId(),
+	}
+
+	if err := config.AddAccount(account); err != nil {
+		w.WriteHeader(500)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	h.pool.Reload()
+	// Register the static Grok model list immediately so the first request routes
+	// to this account without waiting for the background models refresh.
+	h.pool.SetModelList(account.ID, grokModelIDs())
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":   true,
+		"completed": true,
+		"account": map[string]interface{}{
+			"id":         account.ID,
+			"email":      account.Email,
+			"authMethod": account.AuthMethod,
 		},
 	})
 }

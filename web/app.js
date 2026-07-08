@@ -19,6 +19,8 @@
   const agQuotaExpanded = new Set();
   let filterKeyword = '';
   let filterStatus = 'all';
+  let currentView = 'overview';
+  let currentProviderFilter = '';
   let privacyModeEnabled = true;
   let promptRules = [];
   let builderIdSession = '';
@@ -28,6 +30,8 @@
   let kiroSsoPollTimer = null;
   let antigravitySession = '';
   let antigravityPollTimer = null;
+  let grokSession = '';
+  let grokPollTimer = null;
   let exportSelectedIds = new Set();
   let currentVersion = '';
   let testLogs = [];
@@ -803,11 +807,14 @@
     const res = await api('/accounts');
     accountsData = await res.json();
     renderAccounts();
+    renderProviderNav();
+    if (currentView === 'usage') renderUsageView();
   }
 
   // Account list
   function getFilteredAccounts() {
     return accountsData.filter(a => {
+      if (currentProviderFilter && accountProviderKey(a) !== currentProviderFilter) return false;
       if (filterStatus === 'enabled' && !a.enabled) return false;
       if (filterStatus === 'disabled' && (a.enabled || (a.banStatus && a.banStatus !== 'ACTIVE'))) return false;
       if (filterStatus === 'banned' && (!a.banStatus || a.banStatus === 'ACTIVE')) return false;
@@ -891,8 +898,25 @@
     if (normalized === 'builderid') return 'BuilderID';
     if (normalized === 'github') return t('local.providerGithub');
     if (normalized === 'google') return t('local.providerGoogle');
+    if (normalized === 'grok' || normalized === 'xai') return t('provider.grok') || 'Grok / xAI';
     return method;
   }
+  // accountProviderKey buckets an account into one of the sidebar provider
+  // groups. Mirrors the Go-side detection (isGrokAccount / isAntigravityAccount):
+  // anything not Grok/Antigravity is treated as a Kiro (AWS) account.
+  function accountProviderKey(a) {
+    const p = String(a.provider || '').toLowerCase();
+    const m = String(a.authMethod || '').toLowerCase();
+    if (p === 'grok' || p === 'xai' || m === 'grok' || a.grokApiKey || a.grokCookie) return 'grok';
+    if (p === 'antigravity' || m === 'antigravity') return 'antigravity';
+    return 'kiro';
+  }
+  // Display label + icon for each provider bucket, used by the sidebar nav.
+  const PROVIDER_NAV = [
+    { key: 'kiro', labelKey: 'provider.kiro', icon: 'fa-solid fa-robot' },
+    { key: 'antigravity', labelKey: 'provider.antigravity', icon: 'fa-brands fa-google' },
+    { key: 'grok', labelKey: 'provider.grok', icon: 'fa-solid fa-bolt' }
+  ];
   function getStatusBadge(a) {
     const out = [];
     const isBanned = a.banStatus && a.banStatus !== 'ACTIVE';
@@ -980,6 +1004,59 @@
       '</details>';
   }
 
+  // renderGrokInfo shows a small info row for Grok accounts (API key type or cookie)
+  function renderGrokInfo(a) {
+    const isGrok = (a.provider && (a.provider.toLowerCase() === 'grok' || a.provider.toLowerCase() === 'xai')) ||
+                   (a.authMethod && a.authMethod.toLowerCase() === 'grok') ||
+                   a.grokApiKey || a.grokCookie;
+    if (!isGrok) return '';
+
+    const authType = a.grokAuthType || (a.grokApiKey ? 'apikey' : 'cookie');
+    let info = '';
+
+    if (authType === 'apikey' || a.grokApiKey) {
+      const masked = a.grokApiKey ? (a.grokApiKey.slice(0, 6) + '••••' + a.grokApiKey.slice(-4)) : '••••••••';
+      info = '<span class="badge badge-info">xAI Key: ' + escapeHtml(masked) + '</span>';
+    } else if (a.grokCookie) {
+      info = '<span class="badge badge-warning">Grok Web (cookie)</span>';
+    } else if (authType === 'oauth' || authType === 'grok-oauth') {
+      info = '<span class="badge badge-info">Grok Build OAuth</span>';
+    } else {
+      info = '<span class="badge badge-info">Grok / xAI</span>';
+    }
+
+    return '<div class="account-grok-info" style="margin: 4px 0 8px; font-size: 12px;">' + info + '</div>';
+  }
+
+  function isGrokAccountDetail(a) {
+    if (!a) return false;
+    const p = String(a.provider || '').toLowerCase();
+    const m = String(a.authMethod || '').toLowerCase();
+    return p === 'grok' || p === 'xai' || m === 'grok' || !!a.grokApiKey || !!a.grokCookie;
+  }
+
+  function renderGrokDetailSection(a, idAttr) {
+    const authType = a.grokAuthType || (a.grokApiKey ? 'apikey' : (a.grokCookie ? 'cookie' : 'apikey'));
+    let credsHtml = '';
+
+    if (a.grokApiKey) {
+      const masked = a.grokApiKey.slice(0, 8) + '••••••••' + a.grokApiKey.slice(-4);
+      credsHtml += detailItem(t('grok.apiKey') || 'xAI API Key', masked);
+    }
+    if (a.grokCookie) {
+      credsHtml += detailItem(t('grok.cookie') || 'Grok Cookie', '•••••••• (sso)');
+    }
+
+    const typeLabel = (authType === 'oauth' || authType === 'grok-oauth') ? 'Grok Build OAuth' : authType;
+    return '' +
+      '<div class="detail-section"><h4>' + escapeHtml(t('provider.grok') || 'Grok / xAI') + '</h4><div class="detail-grid">' +
+      detailItem(t('grok.authType') || 'Auth Type', typeLabel) +
+      credsHtml +
+      '</div>' +
+      '<p class="help-block" style="margin-top:6px;font-size:12px;">' + escapeHtml(t('grok.detailHint') || 'Grok credentials are stored securely. Use the Test button to verify connectivity.') + '</p>' +
+      '</div>';
+  }
+
   function renderAccounts() {
     const container = $('accountsList');
     if (!container) return;
@@ -1048,6 +1125,7 @@
           '<div class="usage-text"><span>' + (a.trialUsageCurrent != null ? a.trialUsageCurrent.toFixed(1) : 0) + ' / ' + (a.trialUsageLimit != null ? a.trialUsageLimit.toFixed(0) : 0) + '</span><span>' + trialPct.toFixed(1) + '%</span></div>' +
           '</div>' : '') +
         renderAntigravityQuota(a) +
+        renderGrokInfo(a) +
         '<div class="account-stats">' +
         '<div class="account-stat"><div class="account-stat-value">' + (a.requestCount || 0) + '</div><div class="account-stat-label">' + escapeHtml(t('accounts.requests')) + '</div></div>' +
         '<div class="account-stat"><div class="account-stat-value">' + formatNum(a.totalTokens || 0) + '</div><div class="account-stat-label">' + escapeHtml(t('accounts.tokens')) + '</div></div>' +
@@ -1245,6 +1323,8 @@
       detailItem(t('detail.authMethod'), formatAuthMethod(a.provider || a.authMethod)) +
       detailItem(t('detail.region'), a.region || 'us-east-1') +
       '</div></div>' +
+
+      (isGrokAccountDetail(a) ? renderGrokDetailSection(a, idAttr) : '') +
 
       '<div class="detail-section"><h4>' + escapeHtml(t('detail.machineId')) + '</h4><div class="machine-id-row">' +
       '<input type="text" id="machineIdInput" value="' + escapeAttr(a.machineId || '') + '" placeholder="UUID" />' +
@@ -2115,7 +2195,9 @@
     local: 'fa-solid fa-folder-open',
     credentials: 'fa-solid fa-code',
     cookie: 'fa-solid fa-cookie-bite',
-    enterprisesso: 'fa-brands fa-microsoft'
+    enterprisesso: 'fa-brands fa-microsoft',
+    grok: 'fa-solid fa-robot',
+    antigravity: 'fa-brands fa-google'
   };
   function methodCard(type, title, desc) {
     var icon = METHOD_ICONS[type] || 'fa-solid fa-circle-plus';
@@ -2141,6 +2223,7 @@
     else if (type === 'cookie') modalCookie(title, body);
     else if (type === 'enterprisesso') modalEnterpriseSso(title, body);
     else if (type === 'antigravity') modalAntigravity(title, body);
+    else if (type === 'grok') modalGrok(title, body);
     if (!modal.classList.contains('active')) openDialog('addModal');
     enhanceCustomSelects(body);
   }
@@ -2162,11 +2245,9 @@
     antigravitySession = '';
     if (builderIdPollTimer) { clearTimeout(builderIdPollTimer); builderIdPollTimer = null; }
     builderIdSession = '';
-    if (antigravityPollTimer) { clearTimeout(antigravityPollTimer); antigravityPollTimer = null; }
-    if (antigravitySession) {
-      api('/auth/antigravity/cancel', { method: 'POST', body: JSON.stringify({ sessionId: antigravitySession }) }).catch(() => {});
-    }
-    antigravitySession = '';
+    // Grok add flow is direct (API key); no need to cancel server session for now
+    if (grokPollTimer) { clearTimeout(grokPollTimer); grokPollTimer = null; }
+    grokSession = '';
   }
   function modalAdd(title, body) {
     title.textContent = t('modal.addAccount');
@@ -2180,6 +2261,7 @@
       methodCard('cookie', t('modal.cookieTitle'), t('modal.cookieDesc')) +
       methodCard('enterprisesso', t('modal.enterpriseSsoTitle'), t('modal.enterpriseSsoDesc')) +
       methodCard('antigravity', t('modal.antigravityTitle'), t('modal.antigravityDesc')) +
+      methodCard('grok', t('modal.grokTitle') || 'Grok / xAI', t('modal.grokDesc') || 'Add xAI Grok account using API key (recommended) or cookie') +
       '</div>' +
       '<div class="modal-footer"><button class="btn btn-secondary" data-close-add="1" type="button">' + escapeHtml(t('common.cancel')) + '</button></div>';
   }
@@ -2540,6 +2622,193 @@
       '</div>';
     $('importCookieBtn').addEventListener('click', importFromCookie);
   }
+
+  // ==================== Grok / xAI account modal ====================
+  // Two sign-in modes (mirrors 9router): Grok Build OAuth (PKCE loopback,
+  // recommended) and xAI API Key. Backend fully implemented in auth/xai.go + handler.
+  function modalGrok(title, body) {
+    title.textContent = t('modal.grokTitle') || 'Grok / xAI';
+    body.innerHTML =
+      '<p class="help-block">' + escapeHtml(t('modal.grokDesc') || 'Add an xAI Grok account. API Key mode is ready.') + '</p>' +
+      '<div class="seg-tabs" id="grokModeTabs">' +
+      '<button type="button" class="seg-tab active" data-grok-mode="oauth">' + escapeHtml(t('grok.modeOauth') || 'Grok Build OAuth') + '</button>' +
+      '<button type="button" class="seg-tab" data-grok-mode="apikey">' + escapeHtml(t('grok.modeApiKey') || 'xAI API Key') + '</button>' +
+      '</div>' +
+      // ---- OAuth pane ----
+      '<div id="grokOauthPane">' +
+      '<div id="grokStep1">' +
+      '<div class="message message-info"><p class="text-xs">' + escapeHtml(t('kirosso.hostNote')) + '</p></div>' +
+      '<div class="modal-footer">' +
+      '<button class="btn btn-secondary" data-modal-goto="add" type="button">' + escapeHtml(t('common.back')) + '</button>' +
+      '<button class="btn btn-primary" id="startGrokBtn" type="button">' + escapeHtml(t('builderid.startLogin')) + '</button>' +
+      '</div>' +
+      '</div>' +
+      '<div id="grokStep2" class="hidden">' +
+      '<div class="message message-info"><p class="text-xs">' + escapeHtml(t('kirosso.openInstruction')) + '</p></div>' +
+      '<div class="form-group mt-3"><label>' + escapeHtml(t('iam.loginUrl')) + '</label>' +
+      '<div class="endpoint"><span id="grokSignInUrl" class="font-mono text-xs"></span></div>' +
+      '<div class="flex gap-2 mt-2">' +
+      '<button class="btn btn-sm btn-outline flex-1" id="grokOpenBtn" type="button">' + escapeHtml(t('builderid.open')) + '</button>' +
+      '<button class="btn btn-sm btn-outline flex-1" id="grokCopyBtn" type="button">' + escapeHtml(t('common.copy')) + '</button>' +
+      '</div>' +
+      '</div>' +
+      '<p id="grokStatus" class="text-center text-sm mt-4 muted-text">' + escapeHtml(t('builderid.waiting')) + '</p>' +
+      '<div class="form-group mt-3"><label>' + escapeHtml(t('grok.callbackUrl') || t('antigravity.callbackUrl')) + '</label>' +
+      '<input type="text" id="grokCallback" placeholder="http://127.0.0.1:56121/callback?code=..." />' +
+      '<p class="help-block text-xs mt-1">' + escapeHtml(t('grok.callbackHint') || t('antigravity.callbackHint')) + '</p></div>' +
+      '<div class="modal-footer">' +
+      '<button class="btn btn-secondary" id="grokCancelBtn" type="button">' + escapeHtml(t('common.cancel')) + '</button>' +
+      '<button class="btn btn-primary" id="grokCompleteBtn" type="button">' + escapeHtml(t('iam.complete')) + '</button>' +
+      '</div>' +
+      '</div>' +
+      '</div>' +
+      // ---- API key pane ----
+      '<div id="grokApiPane" class="hidden">' +
+      '<div class="form-group">' +
+      '<label>' + escapeHtml(t('grok.apiKey') || 'xAI API Key') + '</label>' +
+      '<input type="text" id="grokApiKey" class="font-mono" placeholder="xai-..." />' +
+      '<p class="help-block text-xs mt-1">' + escapeHtml(t('grok.apiKeyHint') || 'Create key at console.x.ai. Stored securely.') + '</p>' +
+      '</div>' +
+      '<div class="form-group">' +
+      '<label>' + escapeHtml(t('detail.weight') || 'Weight') + '</label>' +
+      '<input type="number" id="grokWeight" value="1" min="1" style="width:100px" />' +
+      '</div>' +
+      '<div class="modal-footer">' +
+      '<button class="btn btn-secondary" data-modal-goto="add" type="button">' + escapeHtml(t('common.back')) + '</button>' +
+      '<button class="btn btn-primary" id="addGrokBtn" type="button">' + escapeHtml(t('common.add')) + '</button>' +
+      '</div>' +
+      '</div>';
+
+    // Both Grok Build OAuth and xAI API Key are supported (mirrors 9router dual auth)
+    // Default to OAuth (recommended)
+    $('grokOauthPane').classList.remove('hidden');
+    $('grokApiPane').classList.add('hidden');
+
+    const oauthTab = qsa('#grokModeTabs .seg-tab[data-grok-mode="oauth"]')[0];
+    const apiTab = qsa('#grokModeTabs .seg-tab[data-grok-mode="apikey"]')[0];
+    if (oauthTab) oauthTab.classList.add('active');
+    if (apiTab) apiTab.classList.remove('active');
+
+    qsa('#grokModeTabs .seg-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        const mode = tab.dataset.grokMode;
+        qsa('#grokModeTabs .seg-tab').forEach(el => el.classList.toggle('active', el === tab));
+        $('grokOauthPane').classList.toggle('hidden', mode !== 'oauth');
+        $('grokApiPane').classList.toggle('hidden', mode !== 'apikey');
+      });
+      // No more dimming — both modes fully implemented on backend
+    });
+
+    $('startGrokBtn').addEventListener('click', startGrokLogin);
+    $('addGrokBtn').addEventListener('click', importGrokAccount);
+  }
+
+  async function startGrokLogin() {
+    const res = await api('/auth/grok/start', { method: 'POST', body: JSON.stringify({}) });
+    const d = await res.json();
+    if (d.sessionId && d.signInUrl) {
+      grokSession = d.sessionId;
+      $('grokSignInUrl').textContent = d.signInUrl;
+      $('grokStep1').classList.add('hidden');
+      $('grokStep2').classList.remove('hidden');
+      $('grokOpenBtn').addEventListener('click', () => window.open($('grokSignInUrl').textContent, '_blank'));
+      $('grokCopyBtn').addEventListener('click', async () => {
+        await copyText($('grokSignInUrl').textContent);
+        toast(t('common.copied'), 'primary');
+      });
+      $('grokCancelBtn').addEventListener('click', cancelGrokLogin);
+      $('grokCompleteBtn').addEventListener('click', completeGrokManual);
+      window.open(d.signInUrl, '_blank');
+      pollGrok(d.interval || 2);
+    } else toastError(t('common.failed') + ': ' + (d.error || ''));
+  }
+  async function completeGrokManual() {
+    const callbackUrl = ($('grokCallback').value || '').trim();
+    if (!callbackUrl) { toastError(t('common.failed') + ': ' + (t('grok.callbackUrl') || t('antigravity.callbackUrl'))); return; }
+    if (grokPollTimer) { clearTimeout(grokPollTimer); grokPollTimer = null; }
+    $('grokStatus').textContent = t('builderid.waiting');
+    const res = await api('/auth/grok/complete', { method: 'POST', body: JSON.stringify({ sessionId: grokSession, callbackUrl }) });
+    const d = await res.json();
+    if (d.completed) {
+      grokSession = '';
+      closeModal(); loadAccounts(); loadStats();
+      toastPrimary(t('builderid.success') + ': ' + (d.account?.email || d.account?.id));
+      autoRefreshNewAccount(d.account?.id);
+    } else {
+      toastError(t('common.failed') + ': ' + (d.error || ''));
+      pollGrok(2);
+    }
+  }
+  function pollGrok(interval) {
+    grokPollTimer = setTimeout(async () => {
+      const res = await api('/auth/grok/poll', { method: 'POST', body: JSON.stringify({ sessionId: grokSession }) });
+      const d = await res.json();
+      if (d.completed) {
+        grokSession = '';
+        closeModal(); loadAccounts(); loadStats();
+        toastPrimary(t('builderid.success') + ': ' + (d.account?.email || d.account?.id));
+        autoRefreshNewAccount(d.account?.id);
+      } else if (d.success && !d.completed) {
+        $('grokStatus').textContent = t('builderid.waiting');
+        pollGrok(interval);
+      } else {
+        toastError(t('common.failed') + ': ' + (d.error || ''));
+        cancelGrokLogin();
+      }
+    }, interval * 1000);
+  }
+  function cancelGrokLogin() {
+    if (grokPollTimer) { clearTimeout(grokPollTimer); grokPollTimer = null; }
+    if (grokSession) {
+      api('/auth/grok/cancel', { method: 'POST', body: JSON.stringify({ sessionId: grokSession }) }).catch(() => {});
+    }
+    grokSession = '';
+    showModal('add');
+  }
+
+  async function importGrokAccount() {
+    const apiKey = ($('grokApiKey').value || '').trim();
+    const weight = parseInt($('grokWeight').value || '1', 10) || 1;
+
+    if (!apiKey) {
+      return toastError((t('grok.apiKey') || 'xAI API Key') + ' is required');
+    }
+
+    const account = {
+      id: '', // server will generate
+      provider: 'grok',
+      authMethod: 'grok',
+      grokAuthType: 'apikey',
+      grokApiKey: apiKey,
+      weight: weight,
+      enabled: true
+    };
+
+    try {
+      const res = await api('/accounts', { method: 'POST', body: JSON.stringify(account) });
+      if (!res.ok) {
+        const err = await res.text();
+        throw new Error(err || 'Failed to add Grok account');
+      }
+      closeModal();
+      await loadAccounts();
+      await loadStats();
+      toastPrimary(t('builderid.success') || 'Account added');
+
+      // Auto register Grok models for routing
+      try {
+        const res = await api('/accounts', { method: 'GET' });
+        const data = await res.json();
+        const newAcc = (data.accounts || []).find(x => x.provider === 'grok' || x.grokApiKey);
+        if (newAcc && newAcc.id) {
+          await api('/accounts/' + newAcc.id + '/models/refresh', { method: 'POST' }).catch(() => {});
+        }
+      } catch (_) {}
+    } catch (e) {
+      toastError('Failed to add Grok account: ' + (e.message || e));
+    }
+  }
+
   function updateLocalFields() {
     const p = $('localProvider').value;
     $('localClientGroup').classList.toggle('hidden', p === 'Google' || p === 'Github');
@@ -3002,12 +3271,132 @@
   }
   function closeUpdateModal() { closeDialog('updateModal'); }
 
-  // Tabs
-  function switchTab(tab) {
-    qsa('.tab').forEach(el => el.classList.toggle('active', el.dataset.tab === tab));
-    qsa('.tab-content').forEach(c => c.classList.add('hidden'));
-    $('tab' + tab.charAt(0).toUpperCase() + tab.slice(1)).classList.remove('hidden');
-    if (tab === 'logs') loadLogs();
+  // Sidebar navigation. A "view" maps to one #view<Name> container. Provider
+  // buckets use the pseudo-view "provider:<key>" which shows the accounts view
+  // filtered to that provider.
+  let currentView = 'overview';
+  const VIEW_TITLE_KEY = {
+    overview: 'nav.overview',
+    accounts: 'nav.allAccounts',
+    usage: 'nav.usage',
+    apikeys: 'nav.apikeys',
+    settings: 'tabs.settings',
+    api: 'tabs.api',
+    logs: 'tabs.logs'
+  };
+
+  function switchView(view) {
+    currentView = view;
+    const isProvider = view.indexOf('provider:') === 0;
+    const providerKey = isProvider ? view.slice('provider:'.length) : '';
+    // The accounts view backs both "All Accounts" and each provider bucket.
+    const contentView = isProvider ? 'accounts' : view;
+
+    currentProviderFilter = providerKey || null;
+
+    qsa('.nav-item').forEach(el => el.classList.toggle('active', el.dataset.view === view));
+    qsa('.view').forEach(c => c.classList.add('hidden'));
+    const el = $('view' + contentView.charAt(0).toUpperCase() + contentView.slice(1));
+    if (el) el.classList.remove('hidden');
+
+    // Topbar title: provider label for buckets, else the view's own key.
+    const title = $('viewTitle');
+    if (title) {
+      if (isProvider) {
+        const nav = PROVIDER_NAV.find(p => p.key === providerKey);
+        title.textContent = nav ? t(nav.labelKey) : t('nav.allAccounts');
+        title.removeAttribute('data-i18n');
+      } else {
+        const key = VIEW_TITLE_KEY[view] || 'nav.overview';
+        title.setAttribute('data-i18n', key);
+        title.textContent = t(key);
+      }
+    }
+
+    if (contentView === 'accounts') renderAccounts();
+    if (view === 'logs') loadLogs();
+    if (view === 'usage') renderUsageView();
+    if (view === 'apikeys') renderApiKeys();
+    closeSidebar();
+  }
+
+  // renderProviderNav rebuilds the per-provider entries under the Providers
+  // group, showing only buckets that currently have accounts, with a count badge.
+  function renderProviderNav() {
+    const container = $('providerNav');
+    if (!container) return;
+    const counts = {};
+    accountsData.forEach(a => {
+      const k = accountProviderKey(a);
+      counts[k] = (counts[k] || 0) + 1;
+    });
+    container.innerHTML = PROVIDER_NAV
+      .filter(p => counts[p.key])
+      .map(p => {
+        const active = currentView === 'provider:' + p.key ? ' active' : '';
+        return '<button type="button" class="nav-item' + active + '" data-view="provider:' + p.key + '">' +
+          '<i class="' + p.icon + ' nav-icon"></i>' +
+          '<span>' + escapeHtml(t(p.labelKey)) + '</span>' +
+          '<span class="nav-count">' + counts[p.key] + '</span>' +
+          '</button>';
+      }).join('');
+  }
+
+  // renderUsageView builds a per-account token/credits/requests table from the
+  // already-loaded accounts data (no extra backend call).
+  function renderUsageView() {
+    const container = $('usageContent');
+    if (!container) return;
+    if (!accountsData.length) {
+      container.innerHTML = '<div class="empty-state">' + escapeHtml(t('accounts.empty')) + '</div>';
+      return;
+    }
+    let totReq = 0, totTok = 0, totCred = 0;
+    const rows = accountsData.map(a => {
+      const req = a.requestCount || 0;
+      const tok = a.totalTokens || 0;
+      const cred = a.totalCredits || 0;
+      totReq += req; totTok += tok; totCred += cred;
+      const nav = PROVIDER_NAV.find(p => p.key === accountProviderKey(a));
+      const provLabel = nav ? t(nav.labelKey) : formatAuthMethod(a.provider || a.authMethod);
+      return '<tr>' +
+        '<td>' + escapeHtml(getDisplayEmail(a.email, a.id)) + '</td>' +
+        '<td>' + escapeHtml(provLabel) + '</td>' +
+        '<td class="num">' + formatNum(req) + '</td>' +
+        '<td class="num">' + formatNum(tok) + '</td>' +
+        '<td class="num">' + cred.toFixed(1) + '</td>' +
+        '</tr>';
+    }).join('');
+    container.innerHTML =
+      '<div class="usage-table-wrap"><table class="usage-table">' +
+      '<thead><tr>' +
+      '<th data-i18n="usage.account">' + escapeHtml(t('usage.account')) + '</th>' +
+      '<th data-i18n="usage.provider">' + escapeHtml(t('usage.provider')) + '</th>' +
+      '<th class="num" data-i18n="usage.requests">' + escapeHtml(t('usage.requests')) + '</th>' +
+      '<th class="num" data-i18n="usage.tokens">' + escapeHtml(t('usage.tokens')) + '</th>' +
+      '<th class="num" data-i18n="usage.credits">' + escapeHtml(t('usage.credits')) + '</th>' +
+      '</tr></thead>' +
+      '<tbody>' + rows + '</tbody>' +
+      '<tfoot><tr>' +
+      '<td colspan="2" data-i18n="usage.total">' + escapeHtml(t('usage.total')) + '</td>' +
+      '<td class="num">' + formatNum(totReq) + '</td>' +
+      '<td class="num">' + formatNum(totTok) + '</td>' +
+      '<td class="num">' + totCred.toFixed(1) + '</td>' +
+      '</tr></tfoot>' +
+      '</table></div>';
+  }
+
+  function openSidebar() {
+    const sb = $('sidebar');
+    const ov = $('sidebarOverlay');
+    if (sb) sb.classList.add('open');
+    if (ov) ov.classList.add('show');
+  }
+  function closeSidebar() {
+    const sb = $('sidebar');
+    const ov = $('sidebarOverlay');
+    if (sb) sb.classList.remove('open');
+    if (ov) ov.classList.remove('show');
   }
 
   // Event wiring
@@ -3048,7 +3437,19 @@
     $('mainThemeToggle').addEventListener('click', toggleTheme);
     $('logoutBtn').addEventListener('click', logout);
 
-    qsa('#tabBar .tab').forEach(tab => tab.addEventListener('click', () => switchTab(tab.dataset.tab)));
+    // Sidebar nav uses delegation because provider entries are rendered
+    // dynamically by renderProviderNav().
+    const nav = $('sidebarNav');
+    if (nav) nav.addEventListener('click', e => {
+      const item = e.target.closest('.nav-item');
+      if (item && item.dataset.view) switchView(item.dataset.view);
+    });
+    const sbToggle = $('sidebarToggle');
+    if (sbToggle) sbToggle.addEventListener('click', openSidebar);
+    const sbClose = $('sidebarClose');
+    if (sbClose) sbClose.addEventListener('click', closeSidebar);
+    const sbOverlay = $('sidebarOverlay');
+    if (sbOverlay) sbOverlay.addEventListener('click', closeSidebar);
 
     qsa('[data-copy]').forEach(btn => btn.addEventListener('click', async () => {
       const id = btn.dataset.copy;

@@ -91,27 +91,49 @@
   </div>
 
   <!-- Main app -->
-  <div id="mainPage" class="hidden">
-    <header class="app-header">
-      <div class="app-header-inner">
-        <div class="brand-wrap">
-          <div class="brand">
-            <img class="brand-icon" src="/admin/favicon.ico" alt="" />
-            <span class="brand-text">Kiro-Go</span>
-          </div>
+  <div id="mainPage" class="app-shell hidden">
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-brand">
+        <div class="brand">
+          <img class="brand-icon" src="/admin/favicon.ico" alt="" />
+          <span class="brand-text">Kiro-Go</span>
         </div>
-        <nav class="header-nav" aria-label="" data-i18n-aria-label="aria.sections">
-          <div class="tabs" id="tabBar">
-            <button type="button" class="tab active" data-tab="accounts"><i class="fa-solid fa-users tab-icon"></i><span
-                data-i18n="tabs.accounts"></span></button>
-            <button type="button" class="tab" data-tab="settings"><i class="fa-solid fa-sliders tab-icon"></i><span
-                data-i18n="tabs.settings"></span></button>
-            <button type="button" class="tab" data-tab="api"><i class="fa-solid fa-plug tab-icon"></i><span
-                data-i18n="tabs.api"></span></button>
-            <button type="button" class="tab" data-tab="logs"><i class="fa-solid fa-list tab-icon"></i><span
-                data-i18n="tabs.logs"></span></button>
-          </div>
-        </nav>
+        <button class="icon-btn sidebar-close" id="sidebarClose" type="button" aria-label=""
+          data-i18n-aria-label="common.close"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <nav class="sidebar-nav" id="sidebarNav" aria-label="" data-i18n-aria-label="aria.sections">
+        <button type="button" class="nav-item active" data-view="overview"><i
+            class="fa-solid fa-gauge nav-icon"></i><span data-i18n="nav.overview"></span></button>
+
+        <div class="nav-group-label" data-i18n="nav.providers"></div>
+        <button type="button" class="nav-item" data-view="accounts"><i class="fa-solid fa-users nav-icon"></i><span
+            data-i18n="nav.allAccounts"></span></button>
+        <div id="providerNav"></div>
+
+        <div class="nav-group-label" data-i18n="nav.system"></div>
+        <button type="button" class="nav-item" data-view="usage"><i class="fa-solid fa-coins nav-icon"></i><span
+            data-i18n="nav.usage"></span></button>
+        <button type="button" class="nav-item" data-view="apikeys"><i class="fa-solid fa-key nav-icon"></i><span
+            data-i18n="nav.apikeys"></span></button>
+        <button type="button" class="nav-item" data-view="settings"><i class="fa-solid fa-sliders nav-icon"></i><span
+            data-i18n="tabs.settings"></span></button>
+        <button type="button" class="nav-item" data-view="api"><i class="fa-solid fa-plug nav-icon"></i><span
+            data-i18n="tabs.api"></span></button>
+        <button type="button" class="nav-item" data-view="logs"><i class="fa-solid fa-list nav-icon"></i><span
+            data-i18n="tabs.logs"></span></button>
+      </nav>
+    </aside>
+    <div class="sidebar-overlay" id="sidebarOverlay" aria-hidden="true"></div>
+
+    <!-- Main area -->
+    <div class="main-area">
+      <header class="topbar">
+        <div class="topbar-left">
+          <button class="icon-btn sidebar-toggle" id="sidebarToggle" type="button" aria-label=""
+            data-i18n-aria-label="aria.sections"><i class="fa-solid fa-bars"></i></button>
+          <h1 class="topbar-title" id="viewTitle" data-i18n="nav.overview"></h1>
+        </div>
         <div class="topbar-actions flex-wrap justify-end">
           <div class="lang-switch" id="mainLangSwitch" role="group" aria-label="" data-i18n-aria-label="lang.label">
             <button class="lang-btn" data-lang="zh" type="button" data-i18n="lang.zh"></button>
@@ -130,11 +152,11 @@
             <span data-i18n="common.logout"></span>
           </button>
         </div>
-      </div>
-    </header>
+      </header>
 
     <div class="container">
-      <!-- Stats summary -->
+      <!-- Overview view -->
+      <div id="viewOverview" class="view">
       <div class="stats-grid">
         <div class="stat-card">
           <div class="stat-card-title" data-i18n="stats.accounts"></div>
@@ -185,9 +207,10 @@
           </div>
         </div>
       </div>
+      </div>
 
-      <!-- Accounts tab -->
-      <div id="tabAccounts" class="tab-content">
+      <!-- Accounts view -->
+      <div id="viewAccounts" class="view hidden">
         <div class="card">
           <div class="card-header">
             <span class="card-title" data-i18n="accounts.title"></span>
@@ -235,8 +258,16 @@
         </div>
       </div>
 
-      <!-- Settings tab -->
-      <div id="tabSettings" class="tab-content hidden">
+      <!-- Token Usage view -->
+      <div id="viewUsage" class="view hidden">
+        <div class="card">
+          <div class="card-header"><span class="card-title" data-i18n="nav.usage"></span></div>
+          <div id="usageContent"></div>
+        </div>
+      </div>
+
+      <!-- API Keys view -->
+      <div id="viewApikeys" class="view hidden">
         <!-- API settings -->
         <div class="card">
           <div class="card-header"><span class="card-title" data-i18n="settings.apiSettings"></span></div>
@@ -261,7 +292,10 @@
           </div>
           <div id="apiKeysList"></div>
         </div>
+      </div>
 
+      <!-- Settings view -->
+      <div id="viewSettings" class="view hidden">
         <!-- Usage settings -->
         <div class="card">
           <div class="card-header"><span class="card-title" data-i18n="settings.usageSettings"></span></div>
@@ -418,8 +452,8 @@
         </div>
       </div>
 
-      <!-- API tab -->
-      <div id="tabApi" class="tab-content hidden">
+      <!-- API view -->
+      <div id="viewApi" class="view hidden">
         <section class="api-card" aria-labelledby="apiEndpointsTitle">
           <div class="card-header api-card-header">
             <span class="card-title" id="apiEndpointsTitle" data-i18n="api.endpoints"></span>
@@ -495,8 +529,8 @@
         </section>
       </div>
 
-      <!-- Logs tab -->
-      <div id="tabLogs" class="tab-content hidden">
+      <!-- Logs view -->
+      <div id="viewLogs" class="view hidden">
         <div class="card">
           <div class="card-header logs-header">
             <span class="card-title" data-i18n="logs.title"></span>
@@ -555,6 +589,7 @@
         </div>
       </div>
     </footer>
+    </div>
   </div>
 
   <!-- Modals -->
