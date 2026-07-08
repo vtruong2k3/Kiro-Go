@@ -1,6 +1,9 @@
 services:
   kiro-go:
-    build: .
+    # Use prebuilt image from GitHub (recommended for server deploy)
+    image: ghcr.io/vtruong2k3/kiro-go:latest
+    # For local development / custom build, comment image above and uncomment:
+    # build: .
     ports:
       - "8080:8080"
       # Enterprise SSO (Microsoft 365) callback. The hosted-portal sign-in
