@@ -30,4 +30,6 @@ services:
       # 3129: default loopback-only cannot be reached by the published port, so bind
       # 0.0.0.0 inside the container (host-side publish is pinned to loopback).
       - ANTIGRAVITY_CALLBACK_BIND=0.0.0.0
+      # Admin panel password (overrides config). Change this!
+      - ADMIN_PASSWORD=admin
     restart: unless-stopped
