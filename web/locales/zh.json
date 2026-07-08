@@ -236,6 +236,7 @@
   "antigravity.quotaTitle": "模型配额（Antigravity）",
   "antigravity.quotaRemaining": "剩余",
   "antigravity.quotaReset": "{0} 后重置",
+  "antigravity.quotaSummary": "{0} 个模型 · 最低 {1}%",
   "kirosso.hostNote": "如果管理面板与代理在同一主机上，登录会自动完成。若部署在远程服务器上，请登录后将回调 URL 粘贴到下方（浏览器会显示“无法访问此网站”页面——复制其地址栏内容）。",
   "kirosso.openInstruction": "已打开浏览器标签页。请使用 Microsoft 365 工作/学校账号登录。如果浏览器停在“无法访问此网站”页面，请复制其完整地址栏内容粘贴到下方并点击“完成登录”。建议使用访客/无痕窗口以避免缓存会话干扰。",
   "kirosso.callbackUrl": "回调 URL",

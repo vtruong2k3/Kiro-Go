@@ -236,6 +236,7 @@
   "antigravity.quotaTitle": "Hạn mức theo model (Antigravity)",
   "antigravity.quotaRemaining": "Còn lại",
   "antigravity.quotaReset": "reset sau {0}",
+  "antigravity.quotaSummary": "{0} model · thấp nhất {1}%",
   "kirosso.hostNote": "Nếu trang quản trị chạy cùng máy chủ với proxy, đăng nhập sẽ hoàn tất tự động. Trên máy chủ từ xa, hãy đăng nhập rồi dán URL callback vào ô bên dưới (trình duyệt sẽ hiện trang \"site can't be reached\" — sao chép URL trên thanh địa chỉ).",
   "kirosso.openInstruction": "Một tab trình duyệt đã được mở. Đăng nhập bằng tài khoản Microsoft 365 (cơ quan/trường học) của bạn. Nếu trình duyệt hiện trang \"site can't be reached\", hãy sao chép toàn bộ URL trên thanh địa chỉ, dán vào ô bên dưới và bấm Hoàn tất đăng nhập. Mẹo: dùng cửa sổ ẩn danh/khách để tránh phiên đăng nhập đã lưu.",
   "kirosso.callbackUrl": "URL callback",

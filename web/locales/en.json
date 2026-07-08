@@ -236,6 +236,7 @@
   "antigravity.quotaTitle": "Model Quota",
   "antigravity.quotaRemaining": "Remaining",
   "antigravity.quotaReset": "resets in {0}",
+  "antigravity.quotaSummary": "{0} models · lowest {1}%",
   "kirosso.hostNote": "If the admin panel runs on the same host as the proxy, sign-in completes automatically. On a remote server, sign in and paste the callback URL below (the browser will show a \"site can't be reached\" page — copy its address bar).",
   "kirosso.openInstruction": "A browser tab was opened. Sign in with your Microsoft 365 work/school account. If the browser lands on a \"site can't be reached\" page, copy its full address bar into the field below and click Complete Login. Tip: use a guest/incognito window to avoid a cached session.",
   "kirosso.callbackUrl": "Callback URL",

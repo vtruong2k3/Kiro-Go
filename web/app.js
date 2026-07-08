@@ -16,6 +16,7 @@
   const LANGS = ['zh', 'en', 'vi'];
   let accountsData = [];
   const selectedAccounts = new Set();
+  const agQuotaExpanded = new Set();
   let filterKeyword = '';
   let filterStatus = 'all';
   let privacyModeEnabled = true;
@@ -950,23 +951,33 @@
   function renderAntigravityQuota(a) {
     const quota = Array.isArray(a.agQuota) ? a.agQuota : [];
     if (quota.length === 0) return '';
-    const rows = quota.map(b => {
+    let minRemain = 100;
+    const items = quota.map(b => {
       const remainPct = Math.max(0, Math.min(100, (b.remainingFraction || 0) * 100));
       const usedPct = 100 - remainPct;
       const barClass = remainPct < 10 ? 'critical' : remainPct < 30 ? 'high' : '';
+      if (remainPct < minRemain) minRemain = remainPct;
+      const name = b.displayName || b.modelId || '-';
       const reset = formatAgResetTime(b.resetTime);
       const resetLabel = reset ? ' · ' + t('antigravity.quotaReset', reset) : '';
-      const label = escapeHtml((b.displayName || b.modelId || '-')) + resetLabel;
+      const tooltip = name + resetLabel;
       return '' +
-        '<div class="account-usage">' +
-        '<div class="usage-label">' + label + '</div>' +
+        '<div class="ag-quota-item" title="' + escapeAttr(tooltip) + '">' +
+        '<div class="ag-quota-name">' + escapeHtml(name) + '</div>' +
         '<div class="usage-bar"><div class="usage-fill ' + barClass + '" data-usage-pct="' + escapeAttr(usedPct) + '"></div></div>' +
-        '<div class="usage-text"><span>' + escapeHtml(t('antigravity.quotaRemaining')) + '</span><span>' + remainPct.toFixed(0) + '%</span></div>' +
+        '<div class="ag-quota-pct">' + remainPct.toFixed(0) + '%</div>' +
         '</div>';
     }).join('');
-    return '<div class="account-usage-group">' +
-      '<div class="usage-label usage-label-group">' + escapeHtml(t('antigravity.quotaTitle')) + '</div>' +
-      rows + '</div>';
+    const summary = t('antigravity.quotaSummary', quota.length, minRemain.toFixed(0));
+    const open = agQuotaExpanded.has(a.id) ? ' open' : '';
+    return '<details class="ag-quota" data-id="' + escapeAttr(a.id) + '"' + open + '>' +
+      '<summary class="ag-quota-summary">' +
+      '<span class="ag-quota-title">' + escapeHtml(t('antigravity.quotaTitle')) + '</span>' +
+      '<span class="ag-quota-meta">' + escapeHtml(summary) + '</span>' +
+      '<i class="fa-solid fa-chevron-down ag-quota-chevron" aria-hidden="true"></i>' +
+      '</summary>' +
+      '<div class="ag-quota-grid">' + items + '</div>' +
+      '</details>';
   }
 
   function renderAccounts() {
@@ -3112,6 +3123,14 @@
       else if (action === 'test') testAccount(id);
       else if (action === 'delete') deleteAccount(id);
     });
+    $('accountsList').addEventListener('toggle', e => {
+      const details = e.target;
+      if (!details.classList || !details.classList.contains('ag-quota')) return;
+      const id = details.dataset.id;
+      if (!id) return;
+      if (details.open) agQuotaExpanded.add(id);
+      else agQuotaExpanded.delete(id);
+    }, true);
   }
 
   function bindSettingsEvents() {
