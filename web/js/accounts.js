@@ -79,12 +79,13 @@ export function formatSubscriptionLabel(type) {
   if (s.includes('FREE')) return t('subscription.free');
   return type || t('subscription.free');
 }
-export function getSubBadge(type) {
+export function getSubBadge(type, labelOverride) {
   const s = (type || '').toUpperCase();
-  if (s.includes('POWER')) return '<span class="badge badge-power">' + escapeHtml(formatSubscriptionLabel(type)) + '</span>';
-  if (s.includes('PRO_PLUS') || s.includes('PROPLUS')) return '<span class="badge badge-proplus">' + escapeHtml(formatSubscriptionLabel(type)) + '</span>';
-  if (s.includes('PRO')) return '<span class="badge badge-pro">' + escapeHtml(formatSubscriptionLabel(type)) + '</span>';
-  return '<span class="badge badge-free">' + escapeHtml(formatSubscriptionLabel(type)) + '</span>';
+  const label = escapeHtml(labelOverride || formatSubscriptionLabel(type));
+  if (s.includes('POWER')) return '<span class="badge badge-power">' + label + '</span>';
+  if (s.includes('PRO_PLUS') || s.includes('PROPLUS')) return '<span class="badge badge-proplus">' + label + '</span>';
+  if (s.includes('PRO')) return '<span class="badge badge-pro">' + label + '</span>';
+  return '<span class="badge badge-free">' + label + '</span>';
 }
 export function getTrialBadge(a) {
   if (a.trialStatus === 'ACTIVE' && a.trialUsageLimit > 0) {
@@ -297,7 +298,7 @@ export function renderAccounts() {
       '<div class="account-info-text">' +
       '<div class="account-email">' + escapeHtml(displayEmail) + '</div>' +
       '<div class="account-meta">' +
-      getSubBadge(a.subscriptionType) +
+      getSubBadge(a.subscriptionType, accountProviderKey(a) === 'grok' ? a.subscriptionTitle : '') +
       getTrialBadge(a) +
       weightBadge +
       overageBadge +
