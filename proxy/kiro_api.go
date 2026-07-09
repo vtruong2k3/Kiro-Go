@@ -419,6 +419,13 @@ func RefreshAccountInfo(account *config.Account) (*config.AccountInfo, error) {
 		return refreshAntigravityInfo(account, info)
 	}
 
+	// Grok/xAI accounts have no Kiro getUsageLimits endpoint (no AWS profileArn).
+	// Routing them there fails with "no available Kiro profile"; resolve their
+	// subscription from the OAuth token tier claim instead.
+	if isGrokAccount(account) {
+		return refreshGrokInfo(account, info)
+	}
+
 	// 获取使用量和订阅信息
 	usage, err := GetUsageLimits(account)
 	if err != nil {
@@ -598,6 +605,54 @@ func antigravityTierToSubscription(tier string) string {
 		return "PRO"
 	default:
 		return "PRO"
+	}
+}
+
+// refreshGrokInfo resolves subscription info for a Grok/xAI account. xAI exposes
+// no usage/quota endpoint, so this makes no network call: it decodes the "tier"
+// claim from the OAuth access token (JWT) and maps it to a UI badge. API-key Grok
+// accounts carry no token, so tier resolves to 0 and the badge is left unchanged.
+// Usage/trial fields are left empty on purpose so the panel hides the quota bar.
+func refreshGrokInfo(account *config.Account, info *config.AccountInfo) (*config.AccountInfo, error) {
+	tier := auth.DecodeXaiTokenTier(account.AccessToken)
+	info.SubscriptionType = grokTierToSubscription(tier)
+	info.SubscriptionTitle = grokTierToTitle(tier)
+	return info, nil
+}
+
+// grokTierToSubscription maps the xAI JWT "tier" claim to the internal
+// SubscriptionType bucket the UI badge uses. Tier 0 (no token / unparseable)
+// returns "" so an API-key account's badge is not overwritten.
+func grokTierToSubscription(tier int) string {
+	switch tier {
+	case 1:
+		return "FREE"
+	case 2:
+		return "PRO"
+	case 3, 4:
+		return "PRO_PLUS"
+	case 5:
+		return "POWER"
+	default:
+		return ""
+	}
+}
+
+// grokTierToTitle maps the xAI JWT "tier" claim to the human-facing plan name.
+func grokTierToTitle(tier int) string {
+	switch tier {
+	case 1:
+		return "Basic"
+	case 2:
+		return "X Premium"
+	case 3:
+		return "X Premium+"
+	case 4:
+		return "SuperGrok"
+	case 5:
+		return "SuperGrok Heavy"
+	default:
+		return ""
 	}
 }
 

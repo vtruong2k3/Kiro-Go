@@ -379,6 +379,35 @@ func decodeXaiIDTokenEmail(idToken string) string {
 	return claims.Sub
 }
 
+// DecodeXaiTokenTier extracts the numeric "tier" claim from an xAI JWT (access or
+// id_token) without verifying the signature. xAI exposes no usage/quota endpoint,
+// so this claim is the only subscription signal available. Returns 0 when the
+// token is empty, unparseable, or carries no tier claim.
+func DecodeXaiTokenTier(token string) int {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return 0
+	}
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return 0
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		payload, err = base64.URLEncoding.DecodeString(parts[1])
+		if err != nil {
+			return 0
+		}
+	}
+	var claims struct {
+		Tier int `json:"tier"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return 0
+	}
+	return claims.Tier
+}
+
 func xaiCodeVerifier() (string, error) {
 	b := make([]byte, xaiPKCEVerifierBytes)
 	if _, err := rand.Read(b); err != nil {
