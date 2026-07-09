@@ -907,7 +907,7 @@
   function accountProviderKey(a) {
     const p = String(a.provider || '').toLowerCase();
     const m = String(a.authMethod || '').toLowerCase();
-    if (p === 'grok' || p === 'xai' || m === 'grok' || a.grokApiKey || a.grokCookie) return 'grok';
+    if (p === 'grok' || p === 'xai' || m === 'grok' || a.grokApiKey) return 'grok';
     if (p === 'antigravity' || m === 'antigravity') return 'antigravity';
     return 'kiro';
   }
@@ -1004,21 +1004,19 @@
       '</details>';
   }
 
-  // renderGrokInfo shows a small info row for Grok accounts (API key type or cookie)
+  // renderGrokInfo shows a small info row for Grok accounts (OAuth or API key).
   function renderGrokInfo(a) {
     const isGrok = (a.provider && (a.provider.toLowerCase() === 'grok' || a.provider.toLowerCase() === 'xai')) ||
                    (a.authMethod && a.authMethod.toLowerCase() === 'grok') ||
-                   a.grokApiKey || a.grokCookie;
+                   a.grokApiKey;
     if (!isGrok) return '';
 
-    const authType = a.grokAuthType || (a.grokApiKey ? 'apikey' : 'cookie');
+    const authType = a.grokAuthType || (a.grokApiKey ? 'apikey' : 'oauth');
     let info = '';
 
     if (authType === 'apikey' || a.grokApiKey) {
       const masked = a.grokApiKey ? (a.grokApiKey.slice(0, 6) + '••••' + a.grokApiKey.slice(-4)) : '••••••••';
       info = '<span class="badge badge-info">xAI Key: ' + escapeHtml(masked) + '</span>';
-    } else if (a.grokCookie) {
-      info = '<span class="badge badge-warning">Grok Web (cookie)</span>';
     } else if (authType === 'oauth' || authType === 'grok-oauth') {
       info = '<span class="badge badge-info">Grok Build OAuth</span>';
     } else {
@@ -1032,19 +1030,16 @@
     if (!a) return false;
     const p = String(a.provider || '').toLowerCase();
     const m = String(a.authMethod || '').toLowerCase();
-    return p === 'grok' || p === 'xai' || m === 'grok' || !!a.grokApiKey || !!a.grokCookie;
+    return p === 'grok' || p === 'xai' || m === 'grok' || !!a.grokApiKey;
   }
 
   function renderGrokDetailSection(a, idAttr) {
-    const authType = a.grokAuthType || (a.grokApiKey ? 'apikey' : (a.grokCookie ? 'cookie' : 'apikey'));
+    const authType = a.grokAuthType || (a.grokApiKey ? 'apikey' : 'oauth');
     let credsHtml = '';
 
     if (a.grokApiKey) {
       const masked = a.grokApiKey.slice(0, 8) + '••••••••' + a.grokApiKey.slice(-4);
       credsHtml += detailItem(t('grok.apiKey') || 'xAI API Key', masked);
-    }
-    if (a.grokCookie) {
-      credsHtml += detailItem(t('grok.cookie') || 'Grok Cookie', '•••••••• (sso)');
     }
 
     const typeLabel = (authType === 'oauth' || authType === 'grok-oauth') ? 'Grok Build OAuth' : authType;
@@ -3273,8 +3268,7 @@
 
   // Sidebar navigation. A "view" maps to one #view<Name> container. Provider
   // buckets use the pseudo-view "provider:<key>" which shows the accounts view
-  // filtered to that provider.
-  let currentView = 'overview';
+  // filtered to that provider. currentView is declared near the top of the IIFE.
   const VIEW_TITLE_KEY = {
     overview: 'nav.overview',
     accounts: 'nav.allAccounts',

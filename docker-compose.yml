@@ -1,9 +1,7 @@
 services:
   kiro-go:
-    # Use prebuilt image from GitHub (recommended for server deploy)
-    image: ghcr.io/vtruong2k3/kiro-go:latest
-    # For local development / custom build, comment image above and uncomment:
-    # build: .
+    build: .
+    # image: ghcr.io/vtruong2k3/kiro-go:latest   # use this on server (see git version)
     ports:
       - "8080:8080"
       # Enterprise SSO (Microsoft 365) callback. The hosted-portal sign-in
@@ -16,6 +14,10 @@ services:
       # 3128 above: Google redirects the browser to localhost:3129, so the operator
       # runs that browser ON THE DOCKER HOST. Pinned host-side to loopback.
       - "127.0.0.1:3129:3129"
+      # Grok Build (xAI) OAuth callback. Same rationale as 3128/3129: xAI redirects
+      # the browser to 127.0.0.1:56121, so the operator runs that browser ON THE
+      # DOCKER HOST. Pinned host-side to loopback.
+      - "127.0.0.1:56121:56121"
     volumes:
       - ./data:/app/data
     environment:
@@ -33,6 +35,10 @@ services:
       # 3129: default loopback-only cannot be reached by the published port, so bind
       # 0.0.0.0 inside the container (host-side publish is pinned to loopback).
       - ANTIGRAVITY_CALLBACK_BIND=0.0.0.0
+      # Same as above but for the Grok Build (xAI) OAuth callback listener on 56121:
+      # bind 0.0.0.0 inside the container so the loopback-pinned published port can
+      # reach it during the transient (~10-minute) login window.
+      - XAI_CALLBACK_BIND=0.0.0.0
       # Admin panel password (overrides config). Change this!
       - ADMIN_PASSWORD=admin
     restart: unless-stopped
