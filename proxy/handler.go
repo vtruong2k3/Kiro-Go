@@ -1977,6 +1977,30 @@ func (h *Handler) handleOpenAIStream(w http.ResponseWriter, payload *KiroPayload
 				continue
 			}
 			h.recordFailureWithDetails("openai", model, account.ID, err)
+			// Stream already started, so we cannot retry another account. Emit an
+			// error chunk and terminate the stream explicitly, otherwise the client
+			// sees the connection drop mid-response with no signal (looks like the
+			// model stopped on its own).
+			errChunk := map[string]interface{}{
+				"id":      chatID,
+				"object":  "chat.completion.chunk",
+				"created": time.Now().Unix(),
+				"model":   model,
+				"choices": []map[string]interface{}{{
+					"index":         0,
+					"delta":         map[string]interface{}{},
+					"finish_reason": "error",
+				}},
+				"error": map[string]string{
+					"type":    "upstream_error",
+					"message": err.Error(),
+				},
+			}
+			if data, mErr := json.Marshal(errChunk); mErr == nil {
+				fmt.Fprintf(w, "data: %s\n\n", string(data))
+			}
+			fmt.Fprint(w, "data: [DONE]\n\n")
+			flusher.Flush()
 			return
 		}
 

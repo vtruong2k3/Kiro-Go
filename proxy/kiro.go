@@ -4,6 +4,7 @@ package proxy
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -20,6 +21,14 @@ import (
 
 	"github.com/google/uuid"
 )
+
+// streamIdleTimeout bounds how long the upstream stream may stay completely
+// silent (no bytes) before we treat the connection as dead and abort. It must
+// be long enough to survive a lengthy reasoning/thinking pause but short enough
+// that a truly dead connection does not hang the client forever. The overall
+// request has no total timeout (see the streaming client's Timeout: 0), so this
+// per-read idle watchdog is the only thing bounding a stalled stream.
+const streamIdleTimeout = 120 * time.Second
 
 // Endpoint configuration (auto-fallback on quota exhaustion).
 type kiroEndpoint struct {
@@ -71,7 +80,11 @@ func GetClientForProxy(proxyURL string) *http.Client {
 		return cached.(*http.Client)
 	}
 	client := &http.Client{
-		Timeout:   5 * time.Minute,
+		// No total timeout: streaming responses can run for many minutes while
+		// the model produces reasoning/tokens. A stalled stream is instead
+		// bounded by the transport's ResponseHeaderTimeout and the per-read idle
+		// watchdog in parseEventStream (streamIdleTimeout).
+		Timeout:   0,
 		Transport: buildKiroTransport(proxyURL),
 	}
 	proxyClientCache.Store(proxyURL, client)
@@ -113,6 +126,10 @@ func buildKiroTransport(proxyURL string) *http.Transport {
 		IdleConnTimeout:     90 * time.Second,
 		DisableCompression:  false,
 		ForceAttemptHTTP2:   true,
+		// Bound only the wait for the first response header, not the streaming
+		// body. Guards against an upstream that accepts the connection but never
+		// starts responding, without capping long reasoning streams.
+		ResponseHeaderTimeout: 120 * time.Second,
 	}
 	if proxyURL != "" {
 		if u, err := url.Parse(proxyURL); err == nil {
@@ -129,7 +146,10 @@ func buildKiroTransport(proxyURL string) *http.Transport {
 // InitKiroHttpClient initializes (or reinitializes) the HTTP clients used for Kiro API requests.
 func InitKiroHttpClient(proxyURL string) {
 	client := &http.Client{
-		Timeout:   5 * time.Minute,
+		// No total timeout: streaming can run for many minutes. Stalls are bounded
+		// by the transport's ResponseHeaderTimeout and the per-read idle watchdog
+		// in parseEventStream (streamIdleTimeout).
+		Timeout:   0,
 		Transport: buildKiroTransport(proxyURL),
 	}
 	kiroHttpStore.Store(client)
@@ -346,8 +366,10 @@ func CallKiroAPI(account *config.Account, payload *KiroPayload, callback *KiroSt
 		if logger.GetLevel() == logger.LevelDebug {
 			logger.Debugf("[KiroAPI] Request payload: %s", string(reqBody))
 		}
-		req, err := http.NewRequest("POST", epURL, bytes.NewReader(reqBody))
+		ctx, cancel := context.WithCancel(context.Background())
+		req, err := http.NewRequestWithContext(ctx, "POST", epURL, bytes.NewReader(reqBody))
 		if err != nil {
+			cancel()
 			lastErr = err
 			continue
 		}
@@ -371,6 +393,7 @@ func CallKiroAPI(account *config.Account, payload *KiroPayload, callback *KiroSt
 
 		resp, err := GetClientForProxy(ResolveAccountProxyURL(account)).Do(req)
 		if err != nil {
+			cancel()
 			lastErr = err
 			logger.Warnf("[KiroAPI] Endpoint %s failed: %v", ep.Name, err)
 			continue
@@ -378,6 +401,7 @@ func CallKiroAPI(account *config.Account, payload *KiroPayload, callback *KiroSt
 
 		if resp.StatusCode == 429 {
 			resp.Body.Close()
+			cancel()
 			logger.Warnf("[KiroAPI] Endpoint %s quota exhausted (429), trying next...", ep.Name)
 			lastErr = fmt.Errorf("quota exhausted on %s", ep.Name)
 			continue
@@ -386,6 +410,7 @@ func CallKiroAPI(account *config.Account, payload *KiroPayload, callback *KiroSt
 		if resp.StatusCode != 200 {
 			errBody, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
+			cancel()
 			lastErr = fmt.Errorf("HTTP %d from %s: %s", resp.StatusCode, ep.Name, string(errBody))
 			// Authentication errors and payment errors are not retried across endpoints.
 			if resp.StatusCode == 401 || resp.StatusCode == 403 || resp.StatusCode == 402 {
@@ -395,8 +420,15 @@ func CallKiroAPI(account *config.Account, payload *KiroPayload, callback *KiroSt
 			continue
 		}
 
-		err = parseEventStream(resp.Body, callback)
+		// Guard the streaming read with an idle watchdog: if no bytes arrive for
+		// streamIdleTimeout, cancel the request context to unblock the in-flight
+		// Read (which would otherwise hang forever now that the client has no
+		// total timeout).
+		idleReader := newIdleTimeoutReader(resp.Body, streamIdleTimeout, cancel)
+		err = parseEventStream(idleReader, callback)
+		idleReader.Stop()
 		resp.Body.Close()
+		cancel()
 		return err
 	}
 
@@ -414,6 +446,36 @@ func accountEmailForLog(account *config.Account) string {
 }
 
 // ==================== Event Stream Parsing ====================
+
+// idleTimeoutReader wraps a streaming body and fires onIdle when no Read makes
+// progress within timeout. It resets its timer at the start of every Read, so
+// the deadline measures the gap between successive reads (idle time), not the
+// total stream duration. onIdle typically cancels the request context, which
+// unblocks the in-flight Read with an error.
+type idleTimeoutReader struct {
+	r       io.Reader
+	timeout time.Duration
+	timer   *time.Timer
+}
+
+func newIdleTimeoutReader(r io.Reader, timeout time.Duration, onIdle func()) *idleTimeoutReader {
+	return &idleTimeoutReader{
+		r:       r,
+		timeout: timeout,
+		timer:   time.AfterFunc(timeout, onIdle),
+	}
+}
+
+func (r *idleTimeoutReader) Read(p []byte) (int, error) {
+	r.timer.Reset(r.timeout)
+	return r.r.Read(p)
+}
+
+// Stop halts the idle timer. Call it once the stream is fully consumed so the
+// pending onIdle callback does not fire after completion.
+func (r *idleTimeoutReader) Stop() {
+	r.timer.Stop()
+}
 
 // parseEventStream decodes an AWS binary Event Stream response body.
 func parseEventStream(body io.Reader, callback *KiroStreamCallback) error {

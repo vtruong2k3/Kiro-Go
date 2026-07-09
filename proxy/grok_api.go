@@ -167,10 +167,25 @@ func isStreamRequested(payload *KiroPayload) bool {
 // parseGrokOpenAISSE reads standard OpenAI SSE from Grok and drives the callback.
 func parseGrokOpenAISSE(body io.Reader, callback *KiroStreamCallback, model string) error {
 	scanner := bufio.NewScanner(body)
+	// Grok can emit very large SSE lines (tool arguments, long reasoning). The
+	// default 64KB scanner buffer would trigger bufio.ErrTooLong and truncate
+	// the stream; raise the max token size to 1MB.
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	var fullContent strings.Builder
 	var fullReasoning strings.Builder
 	var inputTokens, outputTokens int
 	var lastFinish string
+
+	// Accumulate streamed tool calls by their delta index. OpenAI-style SSE
+	// sends the id/name in the first delta and appends argument fragments in
+	// later deltas for the same index.
+	type toolAccum struct {
+		id   string
+		name string
+		args strings.Builder
+	}
+	toolByIndex := map[int]*toolAccum{}
+	var toolOrder []int
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -204,6 +219,23 @@ func parseGrokOpenAISSE(body io.Reader, callback *KiroStreamCallback, model stri
 					callback.OnText(ch.Delta.ReasoningContent, true)
 				}
 			}
+			for _, tcd := range ch.Delta.ToolCalls {
+				acc := toolByIndex[tcd.Index]
+				if acc == nil {
+					acc = &toolAccum{}
+					toolByIndex[tcd.Index] = acc
+					toolOrder = append(toolOrder, tcd.Index)
+				}
+				if tcd.ID != "" {
+					acc.id = tcd.ID
+				}
+				if tcd.Function.Name != "" {
+					acc.name = tcd.Function.Name
+				}
+				if tcd.Function.Arguments != "" {
+					acc.args.WriteString(tcd.Function.Arguments)
+				}
+			}
 			if ch.FinishReason != nil && *ch.FinishReason != "" {
 				lastFinish = *ch.FinishReason
 			}
@@ -220,6 +252,30 @@ func parseGrokOpenAISSE(body io.Reader, callback *KiroStreamCallback, model stri
 			callback.OnError(err)
 		}
 		return err
+	}
+
+	// Emit any accumulated tool calls before completing. Without this the
+	// stream would end silently whenever the model chose to call a tool.
+	if callback.OnToolUse != nil {
+		for _, idx := range toolOrder {
+			acc := toolByIndex[idx]
+			if acc == nil || acc.name == "" {
+				continue
+			}
+			input := map[string]interface{}{}
+			if acc.args.Len() > 0 {
+				_ = json.Unmarshal([]byte(acc.args.String()), &input)
+			}
+			id := acc.id
+			if id == "" {
+				id = "toolu_" + uuid.New().String()
+			}
+			callback.OnToolUse(KiroToolUse{
+				ToolUseID: id,
+				Name:      acc.name,
+				Input:     input,
+			})
+		}
 	}
 
 	// Finalize

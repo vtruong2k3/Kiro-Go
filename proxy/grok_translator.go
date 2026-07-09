@@ -376,11 +376,25 @@ type openAIStreamChunk struct {
 			Role    string `json:"role,omitempty"`
 			Content string `json:"content,omitempty"`
 			// Many providers (incl. Grok) use reasoning_content for thinking.
-			ReasoningContent string `json:"reasoning_content,omitempty"`
+			ReasoningContent string                `json:"reasoning_content,omitempty"`
+			ToolCalls        []streamToolCallDelta `json:"tool_calls,omitempty"`
 		} `json:"delta"`
 		FinishReason *string `json:"finish_reason"`
 	} `json:"choices"`
 	Usage *OpenAIUsage `json:"usage,omitempty"`
+}
+
+// streamToolCallDelta is a partial tool call as streamed in OpenAI SSE deltas.
+// The first delta for a given index carries id + function.name; later deltas
+// for the same index append fragments of function.arguments.
+type streamToolCallDelta struct {
+	Index    int    `json:"index"`
+	ID       string `json:"id,omitempty"`
+	Type     string `json:"type,omitempty"`
+	Function struct {
+		Name      string `json:"name,omitempty"`
+		Arguments string `json:"arguments,omitempty"`
+	} `json:"function"`
 }
 
 // openAIResponse is the non-streaming response shape.
