@@ -8,9 +8,11 @@
 // how the rest of this repo validates behavior (Go's testing package), these
 // example tests assert the dialog-composition contract at the source level:
 //
-//   - modalAdd renders one methodCard(...) entry per supported login method,
-//     including the Kiro-hosted enterprise SSO method that replaced the older
-//     MS365-specific flow.
+//   - The add dialog offers one login method per supported provider. The
+//     methods are declared in the METHOD_CARDS map and ordered by ALL_METHODS;
+//     modalAdd renders cards from that map (optionally filtered to the current
+//     provider), so the contract is asserted against METHOD_CARDS + ALL_METHODS
+//     rather than inline methodCard(...) calls in modalAdd.
 //   - showModal routes the 'enterprisesso' type to modalEnterpriseSso, and
 //     modalEnterpriseSso replaces modalBody.innerHTML with its login view, so
 //     selecting it after another method's view is shown swaps in the SSO view.
@@ -38,13 +40,15 @@ var addMethodCards = []string{
 	"grok",
 }
 
-// readAppJS returns the contents of web/app.js relative to this test's package
-// directory.
+// readAppJS returns the contents of the module that defines the add-account
+// dialog composition. The UI was split into ES modules under web/js/; the
+// dialog methods (METHOD_CARDS, ALL_METHODS, showModal, modalEnterpriseSso)
+// now live in web/js/auth-modals.js.
 func readAppJS(t *testing.T) string {
 	t.Helper()
-	data, err := os.ReadFile("app.js")
+	data, err := os.ReadFile("js/auth-modals.js")
 	if err != nil {
-		t.Fatalf("read app.js: %v", err)
+		t.Fatalf("read js/auth-modals.js: %v", err)
 	}
 	return string(data)
 }
@@ -82,17 +86,20 @@ func extractFunctionBody(t *testing.T, src, name string) string {
 
 // TestModalAddRendersAllMethodCards verifies the add dialog offers exactly the
 // expected set of selectable login methods, with no duplicates and nothing
-// unexpected.
+// unexpected. The methods live in the METHOD_CARDS map (keyed by method id) and
+// their default order in the ALL_METHODS array; modalAdd renders from these, so
+// the contract is asserted against those two declarations.
 func TestModalAddRendersAllMethodCards(t *testing.T) {
-	body := extractFunctionBody(t, readAppJS(t), "modalAdd")
+	src := readAppJS(t)
 
-	methodCall := regexp.MustCompile(`methodCard\(\s*'([^']+)'`)
-	matches := methodCall.FindAllStringSubmatch(body, -1)
+	// Keys of the METHOD_CARDS map: `<id>: () => methodCard('<id>', ...)`.
+	cardRe := regexp.MustCompile(`(?m)^\s*([a-z]+):\s*\(\)\s*=>\s*methodCard\(`)
+	matches := cardRe.FindAllStringSubmatch(src, -1)
 
 	seen := make(map[string]bool, len(matches))
 	for _, m := range matches {
 		if seen[m[1]] {
-			t.Fatalf("duplicate method card %q in modalAdd", m[1])
+			t.Fatalf("duplicate method card %q in METHOD_CARDS", m[1])
 		}
 		seen[m[1]] = true
 	}
@@ -102,14 +109,50 @@ func TestModalAddRendersAllMethodCards(t *testing.T) {
 		for _, m := range matches {
 			got = append(got, m[1])
 		}
-		t.Fatalf("expected %d methodCard entries in modalAdd, got %d: %v", len(addMethodCards), len(matches), got)
+		t.Fatalf("expected %d entries in METHOD_CARDS, got %d: %v", len(addMethodCards), len(matches), got)
 	}
 
 	for _, want := range addMethodCards {
 		if !seen[want] {
-			t.Errorf("modalAdd is missing method card %q", want)
+			t.Errorf("METHOD_CARDS is missing method %q", want)
 		}
 	}
+
+	// ALL_METHODS must list every method id exactly once so the unfiltered
+	// dialog renders all of them.
+	allMethods := extractArrayLiteral(t, src, "ALL_METHODS")
+	if len(allMethods) != len(addMethodCards) {
+		t.Fatalf("expected ALL_METHODS to list %d methods, got %d: %v", len(addMethodCards), len(allMethods), allMethods)
+	}
+	for _, want := range addMethodCards {
+		found := false
+		for _, m := range allMethods {
+			if m == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("ALL_METHODS is missing method %q", want)
+		}
+	}
+}
+
+// extractArrayLiteral pulls the single-quoted string entries out of a
+// `const <name> = [ '...', '...' ];` declaration in src.
+func extractArrayLiteral(t *testing.T, src, name string) []string {
+	t.Helper()
+	decl := regexp.MustCompile(name + `\s*=\s*\[([^\]]*)\]`)
+	m := decl.FindStringSubmatch(src)
+	if m == nil {
+		t.Fatalf("array literal %s not found in app.js", name)
+	}
+	itemRe := regexp.MustCompile(`'([^']+)'`)
+	var out []string
+	for _, im := range itemRe.FindAllStringSubmatch(m[1], -1) {
+		out = append(out, im[1])
+	}
+	return out
 }
 
 // TestShowModalRoutesEnterpriseSsoToLoginView verifies that selecting the

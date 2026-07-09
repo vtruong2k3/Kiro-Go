@@ -6,7 +6,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Kiro-Go</title>
   <link rel="icon" type="image/x-icon" href="/admin/favicon.ico" />
-  <script src="/admin/vendor/tailwindcss-browser/index.global.js"></script>
   <link rel="stylesheet" href="/admin/vendor/fontawesome/css/all.min.css" />
   <link rel="stylesheet" href="/admin/styles.css" id="__cssAsset" />
   <link rel="stylesheet" href="/admin/toast.css" id="__toastCss" />
@@ -717,7 +716,27 @@
           data-i18n-aria-label="common.close">&times;</button>
       </div>
       <div class="modal-body" id="apiViewBody">
-        <div class="api-view-loading"><i class="fa-solid fa-spinner fa-spin"></i> <span data-i18n="api.loading"></span></div>
+        <div class="hamster-loader" role="img" aria-label="Loading" data-i18n-aria-label="api.loading">
+          <div class="wheel-and-hamster">
+            <div class="wheel"></div>
+            <div class="hamster">
+              <div class="hamster__body">
+                <div class="hamster__head">
+                  <div class="hamster__ear"></div>
+                  <div class="hamster__eye"></div>
+                  <div class="hamster__nose"></div>
+                </div>
+                <div class="hamster__limb hamster__limb--fr"></div>
+                <div class="hamster__limb hamster__limb--fl"></div>
+                <div class="hamster__limb hamster__limb--br"></div>
+                <div class="hamster__limb hamster__limb--bl"></div>
+                <div class="hamster__tail"></div>
+              </div>
+            </div>
+            <div class="spoke"></div>
+          </div>
+          <span class="hamster-loader-label" data-i18n="api.loading"></span>
+        </div>
       </div>
     </div>
   </div>
@@ -730,8 +749,8 @@
       t.src = '/admin/toast.js?v=' + v;
       document.body.appendChild(t);
       var s = document.createElement('script');
+      s.type = 'module';
       s.src = '/admin/app.js?v=' + v;
-      s.defer = true;
       document.body.appendChild(s);
     })();
   </script>

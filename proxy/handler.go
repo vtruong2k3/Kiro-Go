@@ -3976,15 +3976,7 @@ func (h *Handler) apiGetAccountModelsCached(w http.ResponseWriter, r *http.Reque
 }
 
 // ==================== 静态文件服务 ====================
-
-func (h *Handler) serveAdminPage(w http.ResponseWriter, r *http.Request) {
-	http.ServeFile(w, r, "web/index.html")
-}
-
-func (h *Handler) serveStaticFile(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/admin/")
-	http.ServeFile(w, r, "web/"+path)
-}
+// serveAdminPage / serveStaticFile live in static.go (gzip + cache).
 
 // apiGetThinkingConfig 获取 thinking 配置
 func (h *Handler) apiGetThinkingConfig(w http.ResponseWriter, r *http.Request) {
