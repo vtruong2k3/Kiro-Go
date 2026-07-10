@@ -149,6 +149,32 @@ func TestBuildCodexResponsesRequest_FlatTools(t *testing.T) {
 	}
 }
 
+func TestBuildCodexResponsesRequest_ClaudeSystemRoleInMessages(t *testing.T) {
+	// A Claude client may put role:"system" inside the messages array (not the
+	// top-level system field). Codex rejects system messages in input[], so they
+	// must be rewritten to role:"developer".
+	req := &ClaudeRequest{
+		Model: "gpt-5.5",
+		Messages: []ClaudeMessage{
+			{Role: "system", Content: "you are helpful"},
+			{Role: "user", Content: "hi"},
+		},
+	}
+	body, err := BuildCodexResponsesRequest(req, nil, "gpt-5.5", "s", false)
+	if err != nil {
+		t.Fatalf("BuildCodexResponsesRequest: %v", err)
+	}
+	input := body["input"].([]map[string]interface{})
+	for _, item := range input {
+		if item["role"] == "system" {
+			t.Errorf("input still has a system-role item; want it rewritten to developer: %v", item)
+		}
+	}
+	if len(input) < 1 || input[0]["role"] != "developer" {
+		t.Errorf("first item role = %v, want developer", input[0]["role"])
+	}
+}
+
 func TestStripCodexStoredItems(t *testing.T) {
 	input := []map[string]interface{}{
 		{"type": "message", "role": "user", "id": "msg_123", "content": []interface{}{}},

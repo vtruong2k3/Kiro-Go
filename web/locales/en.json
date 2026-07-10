@@ -1,7 +1,6 @@
 {
   "login.title": "Sign in",
   "login.subtitle": "Enter admin password to continue",
-
   "login.password": "Admin Password",
   "login.passwordPlaceholder": "Enter password",
   "login.submit": "Login",
@@ -27,7 +26,15 @@
   "tabs.api": "API",
   "nav.overview": "Overview",
   "nav.providers": "Providers",
+  "nav.providersGrid": "All Providers",
   "nav.allAccounts": "All Accounts",
+  "providers.back": "Back to Providers",
+  "providers.allDesc": "View and manage all accounts",
+  "providers.accountCount": "{0} accounts",
+  "providerDesc.kiro": "AWS Kiro / CodeWhisperer",
+  "providerDesc.antigravity": "Google Gemini Code Assist",
+  "providerDesc.grok": "xAI Grok",
+  "providerDesc.codex": "OpenAI ChatGPT",
   "nav.system": "System",
   "nav.usage": "Token Usage",
   "nav.apikeys": "API Keys",

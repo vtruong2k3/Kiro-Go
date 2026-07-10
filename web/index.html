@@ -106,9 +106,8 @@
             class="fa-solid fa-gauge nav-icon"></i><span data-i18n="nav.overview"></span></button>
 
         <div class="nav-group-label" data-i18n="nav.providers"></div>
-        <button type="button" class="nav-item" data-view="accounts"><i class="fa-solid fa-users nav-icon"></i><span
-            data-i18n="nav.allAccounts"></span></button>
-        <div id="providerNav"></div>
+        <button type="button" class="nav-item" data-view="providers"><i class="fa-solid fa-grip nav-icon"></i><span
+            data-i18n="nav.providersGrid"></span></button>
 
         <div class="nav-group-label" data-i18n="nav.system"></div>
         <button type="button" class="nav-item" data-view="usage"><i class="fa-solid fa-coins nav-icon"></i><span
@@ -208,10 +207,17 @@
       </div>
       </div>
 
+      <!-- Providers landing view -->
+      <div id="viewProviders" class="view hidden">
+        <div class="provider-grid" id="providerGrid"></div>
+      </div>
+
       <!-- Accounts view -->
       <div id="viewAccounts" class="view hidden">
         <div class="card">
           <div class="card-header">
+            <button class="btn btn-outline btn-sm hidden" id="backToProvidersBtn"><i class="fa-solid fa-arrow-left"
+                aria-hidden="true"></i><span class="btn-text" data-i18n="providers.back"></span></button>
             <span class="card-title" data-i18n="accounts.title"></span>
             <div class="card-actions">
               <label class="flex items-center gap-2 cursor-pointer select-none" title=""

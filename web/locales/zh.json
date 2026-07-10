@@ -1,7 +1,6 @@
 {
   "login.title": "登录",
   "login.subtitle": "请输入管理密码以继续",
-
   "login.password": "管理密码",
   "login.passwordPlaceholder": "输入密码",
   "login.submit": "登录",
@@ -27,7 +26,15 @@
   "tabs.api": "API",
   "nav.overview": "概览",
   "nav.providers": "提供商",
+  "nav.providersGrid": "全部提供商",
   "nav.allAccounts": "全部账号",
+  "providers.back": "返回提供商",
+  "providers.allDesc": "查看和管理所有账号",
+  "providers.accountCount": "{0} 个账号",
+  "providerDesc.kiro": "AWS Kiro / CodeWhisperer",
+  "providerDesc.antigravity": "Google Gemini Code Assist",
+  "providerDesc.grok": "xAI Grok",
+  "providerDesc.codex": "OpenAI ChatGPT",
   "nav.system": "系统",
   "nav.usage": "Token 用量",
   "nav.apikeys": "API Key",

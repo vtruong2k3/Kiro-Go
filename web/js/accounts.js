@@ -1,7 +1,7 @@
 // accounts.js — account list, filters, batch actions, detail modal, test modal.
 //
 // Depends on state.js (shared state) and core.js (DOM/i18n/dialog/api helpers).
-// Calls a few main-module functions at runtime (loadStats, renderProviderNav,
+// Calls a few main-module functions at runtime (loadStats, renderProvidersLanding,
 // renderUsageView); that import is circular but safe because every such call is
 // inside a function body (evaluated after all modules finish loading), not at
 // top level.
@@ -12,13 +12,13 @@ import {
   openDialog, closeDialog, closeAllCustomSelects, confirmAction,
   enhanceCustomSelects, getDisplayEmail,
 } from './core.js';
-import { loadStats, renderProviderNav, renderUsageView } from '../app.js';
+import { loadStats, renderProvidersLanding, renderUsageView } from '../app.js';
 
 export async function loadAccounts() {
   const res = await api('/accounts');
   state.accountsData = await res.json();
   renderAccounts();
-  renderProviderNav();
+  renderProvidersLanding();
   if (state.currentView === 'usage') renderUsageView();
 }
 
@@ -129,12 +129,14 @@ export function accountProviderKey(a) {
   if (p === 'antigravity' || m === 'antigravity') return 'antigravity';
   return 'kiro';
 }
-// Display label + icon for each provider bucket, used by the sidebar nav.
+// Display label + icon for each provider bucket, used by the sidebar nav and the
+// Providers landing grid. color = icon-tile background; descKey = short i18n
+// description shown on the landing card.
 export const PROVIDER_NAV = [
-  { key: 'kiro', labelKey: 'provider.kiro', icon: 'fa-solid fa-robot' },
-  { key: 'antigravity', labelKey: 'provider.antigravity', icon: 'fa-brands fa-google' },
-  { key: 'grok', labelKey: 'provider.grok', icon: 'fa-solid fa-bolt' },
-  { key: 'codex', labelKey: 'provider.codex', icon: 'fa-solid fa-code' }
+  { key: 'kiro', labelKey: 'provider.kiro', icon: 'fa-solid fa-robot', color: '#f59e0b', descKey: 'providerDesc.kiro' },
+  { key: 'antigravity', labelKey: 'provider.antigravity', icon: 'fa-brands fa-google', color: '#4285f4', descKey: 'providerDesc.antigravity' },
+  { key: 'grok', labelKey: 'provider.grok', icon: 'fa-solid fa-bolt', color: '#111827', descKey: 'providerDesc.grok' },
+  { key: 'codex', labelKey: 'provider.codex', icon: 'fa-solid fa-code', color: '#3B82F6', descKey: 'providerDesc.codex' }
 ];
 export function getStatusBadge(a) {
   const out = [];

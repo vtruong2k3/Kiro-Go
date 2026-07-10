@@ -38,7 +38,9 @@ type codexModel struct {
 // codexModels mirrors 9router registry/codex.js: text models (each with a
 // "-review" quota-family twin), reasoning-effort variants, and image models.
 var codexModels = []codexModel{
-	{ID: "gpt-5.5", Name: "GPT 5.5"},
+	{ID: "gpt-5.6", Name: "GPT 5.6"},
+	{ID: "gpt-5.6-review", Name: "GPT 5.6 Review", UpstreamModelID: "gpt-5.6"},
+	{ID: "gpt-5.5", Name: "GPT 5.5", UpstreamModelID: "gpt-5.5"},
 	{ID: "gpt-5.5-review", Name: "GPT 5.5 Review", UpstreamModelID: "gpt-5.5"},
 	{ID: "gpt-5.4", Name: "GPT 5.4"},
 	{ID: "gpt-5.4-review", Name: "GPT 5.4 Review", UpstreamModelID: "gpt-5.4"},
@@ -166,6 +168,7 @@ func BuildCodexResponsesRequest(sourceClaude *ClaudeRequest, sourceOpenAI *OpenA
 	}
 
 	input = stripCodexStoredItems(input)
+	input = convertCodexSystemRole(input)
 	if len(input) == 0 {
 		input = []map[string]interface{}{{
 			"type":    "message",
@@ -563,4 +566,21 @@ func stripCodexStoredItems(input []map[string]interface{}) []map[string]interfac
 		out = append(out, item)
 	}
 	return out
+}
+
+// convertCodexSystemRole rewrites any message input item with role "system" to
+// role "developer". The Codex backend rejects system messages inside input[]
+// ("System messages are not allowed"); developer is the accepted equivalent and
+// stays in the cacheable prefix. System content that arrives via the top-level
+// instructions field is untouched (it never becomes an input item).
+func convertCodexSystemRole(input []map[string]interface{}) []map[string]interface{} {
+	for _, item := range input {
+		if typ, _ := item["type"].(string); typ != "" && typ != "message" {
+			continue
+		}
+		if role, _ := item["role"].(string); role == "system" {
+			item["role"] = "developer"
+		}
+	}
+	return input
 }

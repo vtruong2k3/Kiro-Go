@@ -31,9 +31,9 @@ import (
 
 const (
 	codexResponsesURL = "https://chatgpt.com/backend-api/codex/responses"
-	codexUserAgent    = "codex_cli_rs/0.136.0"
+	codexUserAgent    = "codex_cli_rs/0.143.0"
 	codexOriginator   = "codex_cli_rs"
-	codexVersion      = "0.136.0"
+	codexVersion      = "0.143.0"
 )
 
 // CallCodexAPI routes a generation request to the Codex (ChatGPT) upstream.

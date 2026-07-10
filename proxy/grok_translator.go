@@ -301,13 +301,19 @@ func claudeToolResultContent(content interface{}) string {
 func claudeToolsToOpenAITools(tools []ClaudeTool) []map[string]interface{} {
 	out := make([]map[string]interface{}, 0, len(tools))
 	for _, t := range tools {
+		if strings.TrimSpace(t.Name) == "" {
+			continue
+		}
+		fn := map[string]interface{}{
+			"name":       t.Name,
+			"parameters": sanitizeGrokToolParameters(t.InputSchema),
+		}
+		if desc := strings.TrimSpace(t.Description); desc != "" {
+			fn["description"] = desc
+		}
 		out = append(out, map[string]interface{}{
-			"type": "function",
-			"function": map[string]interface{}{
-				"name":        t.Name,
-				"description": t.Description,
-				"parameters":  t.InputSchema,
-			},
+			"type":     "function",
+			"function": fn,
 		})
 	}
 	return out
@@ -339,9 +345,257 @@ func OpenAIToOpenAI(req *OpenAIRequest) (map[string]interface{}, error) {
 		out["model"] = "grok-4"
 	}
 
+	// xAI rejects tool schemas that contain nulls where a boolean/object is
+	// required (most commonly additionalProperties:null from client SDKs).
+	sanitizeGrokOpenAITools(out)
+
 	// xAI is strict about some fields in certain cases; drop empty ones
 	cleanEmptyOpenAIFields(out)
 	return out, nil
+}
+
+// sanitizeGrokOpenAITools rewrites tools[*].function.parameters so the body is
+// acceptable to xAI's JSON Schema validator.
+func sanitizeGrokOpenAITools(body map[string]interface{}) {
+	rawTools, ok := body["tools"]
+	if !ok || rawTools == nil {
+		return
+	}
+	tools, ok := rawTools.([]interface{})
+	if !ok {
+		return
+	}
+	cleaned := make([]interface{}, 0, len(tools))
+	for _, raw := range tools {
+		tool, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		// Nested Chat Completions shape: {type, function:{name,parameters,...}}
+		if fn, ok := tool["function"].(map[string]interface{}); ok {
+			fn["parameters"] = sanitizeGrokToolParameters(fn["parameters"])
+			if name, _ := fn["name"].(string); strings.TrimSpace(name) == "" {
+				continue
+			}
+			cleaned = append(cleaned, tool)
+			continue
+		}
+		// Flat Responses shape: {type, name, parameters, ...}
+		if name, _ := tool["name"].(string); strings.TrimSpace(name) != "" {
+			params := sanitizeGrokToolParameters(tool["parameters"])
+			entry := map[string]interface{}{
+				"type": "function",
+				"function": map[string]interface{}{
+					"name":       name,
+					"parameters": params,
+				},
+			}
+			if desc, _ := tool["description"].(string); strings.TrimSpace(desc) != "" {
+				entry["function"].(map[string]interface{})["description"] = desc
+			}
+			cleaned = append(cleaned, entry)
+			continue
+		}
+	}
+	if len(cleaned) == 0 {
+		delete(body, "tools")
+		return
+	}
+	body["tools"] = cleaned
+}
+
+// emptyGrokObjectSchema is the fallback parameters object when a tool declares
+// no schema (or a non-object schema). xAI requires a valid object schema.
+func emptyGrokObjectSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type":       "object",
+		"properties": map[string]interface{}{},
+	}
+}
+
+// sanitizeGrokToolParameters normalizes a tool parameter schema for xAI.
+// The common failure mode is:
+//
+//	Schema validation failed: (root): null is not of types "boolean", "object"
+//
+// which happens when clients emit e.g. `"additionalProperties": null`. xAI's
+// validator is stricter than OpenAI's and rejects null for any schema field
+// that is typed as boolean|object (or similar unions).
+func sanitizeGrokToolParameters(schema interface{}) interface{} {
+	if schema == nil {
+		return emptyGrokObjectSchema()
+	}
+	m, ok := schema.(map[string]interface{})
+	if !ok {
+		// Non-object schemas aren't valid tool parameters; fall back.
+		return emptyGrokObjectSchema()
+	}
+	if len(m) == 0 {
+		return emptyGrokObjectSchema()
+	}
+	cleaned := sanitizeGrokSchemaValue(cloneSchemaMap(m))
+	out, ok := cleaned.(map[string]interface{})
+	if !ok || len(out) == 0 {
+		return emptyGrokObjectSchema()
+	}
+	// Tool parameters must be an object schema.
+	if _, hasType := out["type"]; !hasType {
+		if _, hasProps := out["properties"]; hasProps {
+			out["type"] = "object"
+		} else if _, hasItems := out["items"]; hasItems {
+			// Array root is uncommon for tools; wrap as object for safety.
+			return emptyGrokObjectSchema()
+		} else {
+			out["type"] = "object"
+		}
+	}
+	if t, _ := out["type"].(string); t == "object" {
+		if _, hasProps := out["properties"]; !hasProps {
+			out["properties"] = map[string]interface{}{}
+		}
+	}
+	return out
+}
+
+// sanitizeGrokSchemaValue recursively strips nulls and normalizes fields that
+// xAI's JSON Schema validator is known to reject.
+func sanitizeGrokSchemaValue(v interface{}) interface{} {
+	switch val := v.(type) {
+	case map[string]interface{}:
+		return sanitizeGrokSchemaMap(val)
+	case []interface{}:
+		out := make([]interface{}, 0, len(val))
+		for _, item := range val {
+			if item == nil {
+				continue
+			}
+			cleaned := sanitizeGrokSchemaValue(item)
+			if cleaned != nil {
+				out = append(out, cleaned)
+			}
+		}
+		return out
+	default:
+		return v
+	}
+}
+
+func sanitizeGrokSchemaMap(m map[string]interface{}) map[string]interface{} {
+	if m == nil {
+		return nil
+	}
+
+	// Drop nulls first so downstream checks see only real values.
+	for k, v := range m {
+		if v == nil {
+			delete(m, k)
+		}
+	}
+
+	// additionalProperties must be boolean or object — never null (already
+	// deleted above). Keep true/false and object schemas; drop anything else.
+	if ap, exists := m["additionalProperties"]; exists {
+		switch ap.(type) {
+		case bool:
+			// ok
+		case map[string]interface{}:
+			m["additionalProperties"] = sanitizeGrokSchemaValue(ap)
+		default:
+			// e.g. number/string leftovers from broken clients
+			delete(m, "additionalProperties")
+		}
+	}
+
+	// required must be an array of strings; empty/null already handled.
+	if req, exists := m["required"]; exists {
+		switch arr := req.(type) {
+		case []interface{}:
+			valid := make([]interface{}, 0, len(arr))
+			for _, item := range arr {
+				if s, ok := item.(string); ok && s != "" {
+					valid = append(valid, s)
+				}
+			}
+			if len(valid) == 0 {
+				delete(m, "required")
+			} else {
+				m["required"] = valid
+			}
+		case []string:
+			if len(arr) == 0 {
+				delete(m, "required")
+			}
+		default:
+			delete(m, "required")
+		}
+	}
+
+	// type: ["string","null"] → "string" (drop nullability union). xAI is fine
+	// with single string types; multi-type arrays with "null" are unnecessary
+	// noise that some validators reject.
+	if t, ok := m["type"].([]interface{}); ok {
+		var nonNull []interface{}
+		for _, item := range t {
+			if s, _ := item.(string); s != "" && s != "null" {
+				nonNull = append(nonNull, s)
+			}
+		}
+		switch len(nonNull) {
+		case 0:
+			delete(m, "type")
+		case 1:
+			m["type"] = nonNull[0]
+		default:
+			m["type"] = nonNull
+		}
+	}
+
+	// Recurse into nested schema nodes.
+	for k, v := range m {
+		switch k {
+		case "properties", "patternProperties", "dependentSchemas", "definitions", "$defs":
+			if child, ok := v.(map[string]interface{}); ok {
+				cleaned := make(map[string]interface{}, len(child))
+				for pk, pv := range child {
+					if pv == nil {
+						continue
+					}
+					if cm := sanitizeGrokSchemaValue(pv); cm != nil {
+						cleaned[pk] = cm
+					}
+				}
+				m[k] = cleaned
+			}
+		case "items", "contains", "not", "if", "then", "else", "additionalProperties", "propertyNames", "unevaluatedProperties", "unevaluatedItems":
+			if v == nil {
+				delete(m, k)
+				continue
+			}
+			if child, ok := v.(map[string]interface{}); ok {
+				m[k] = sanitizeGrokSchemaMap(child)
+			} else if _, isBool := v.(bool); !isBool {
+				// items can also be an array of schemas
+				m[k] = sanitizeGrokSchemaValue(v)
+			}
+		case "allOf", "anyOf", "oneOf", "prefixItems":
+			m[k] = sanitizeGrokSchemaValue(v)
+		default:
+			// Generic recursion for unknown nested objects/arrays.
+			switch v.(type) {
+			case map[string]interface{}, []interface{}:
+				m[k] = sanitizeGrokSchemaValue(v)
+			}
+		}
+	}
+
+	// Drop empty required/enum arrays that may remain after filtering.
+	for _, key := range []string{"required", "enum", "allOf", "anyOf", "oneOf"} {
+		if arr, ok := m[key].([]interface{}); ok && len(arr) == 0 {
+			delete(m, key)
+		}
+	}
+
+	return m
 }
 
 func cleanEmptyOpenAIFields(m map[string]interface{}) {

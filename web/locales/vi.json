@@ -1,7 +1,6 @@
 {
   "login.title": "Đăng nhập",
   "login.subtitle": "Nhập mật khẩu quản trị để tiếp tục",
-
   "login.password": "Mật khẩu quản trị",
   "login.passwordPlaceholder": "Nhập mật khẩu",
   "login.submit": "Đăng nhập",
@@ -27,7 +26,15 @@
   "tabs.api": "API",
   "nav.overview": "Tổng quan",
   "nav.providers": "Nhà cung cấp",
+  "nav.providersGrid": "Tất cả nhà cung cấp",
   "nav.allAccounts": "Tất cả tài khoản",
+  "providers.back": "Quay lại nhà cung cấp",
+  "providers.allDesc": "Xem và quản lý tất cả tài khoản",
+  "providers.accountCount": "{0} tài khoản",
+  "providerDesc.kiro": "AWS Kiro / CodeWhisperer",
+  "providerDesc.antigravity": "Google Gemini Code Assist",
+  "providerDesc.grok": "xAI Grok",
+  "providerDesc.codex": "OpenAI ChatGPT",
   "nav.system": "Hệ thống",
   "nav.usage": "Sử dụng Token",
   "nav.apikeys": "API Keys",

@@ -386,6 +386,7 @@ import {
   // filtered to that provider. state.currentView is declared near the top of the IIFE.
   const VIEW_TITLE_KEY = {
     overview: 'nav.overview',
+    providers: 'nav.providersGrid',
     accounts: 'nav.allAccounts',
     usage: 'nav.usage',
     apikeys: 'nav.apikeys',
@@ -422,32 +423,55 @@ import {
       }
     }
 
+    // Show the "Back to Providers" button whenever viewing the accounts list
+    // (both "All Accounts" and a single provider bucket are reached from the grid).
+    const backBtn = $('backToProvidersBtn');
+    if (backBtn) backBtn.classList.toggle('hidden', contentView !== 'accounts');
+
     if (contentView === 'accounts') renderAccounts();
+    if (view === 'providers') renderProvidersLanding();
     if (view === 'logs') loadLogs();
     if (view === 'usage') renderUsageView();
     if (view === 'apikeys') renderApiKeys();
     closeSidebar();
   }
 
-  // renderProviderNav rebuilds the per-provider entries under the Providers
-  // group, showing only buckets that currently have accounts, with a count badge.
-  export function renderProviderNav() {
-    const container = $('providerNav');
+  // renderProvidersLanding builds the Providers landing grid: one clickable card
+  // per provider bucket with icon, name, short description, and account count.
+  // Clicking a card drills into that provider's filtered accounts view.
+  export function renderProvidersLanding() {
+    const container = $('providerGrid');
     if (!container) return;
     const counts = {};
     state.accountsData.forEach(a => {
       const k = accountProviderKey(a);
       counts[k] = (counts[k] || 0) + 1;
     });
-    container.innerHTML = PROVIDER_NAV
-      .map(p => {
-        const active = state.currentView === 'provider:' + p.key ? ' active' : '';
-        return '<button type="button" class="nav-item' + active + '" data-view="provider:' + p.key + '">' +
-          '<i class="' + p.icon + ' nav-icon"></i>' +
-          '<span>' + escapeHtml(t(p.labelKey)) + '</span>' +
-          '<span class="nav-count">' + (counts[p.key] || 0) + '</span>' +
-          '</button>';
-      }).join('');
+    const total = state.accountsData.length;
+    // Leading "All Accounts" card → the unfiltered accounts view.
+    const allCard = '<button type="button" class="provider-card" data-view="accounts">' +
+      '<span class="provider-card-icon" style="background:#64748b">' +
+      '<i class="fa-solid fa-users" aria-hidden="true"></i></span>' +
+      '<span class="provider-card-body">' +
+      '<span class="provider-card-name">' + escapeHtml(t('nav.allAccounts')) + '</span>' +
+      '<span class="provider-card-desc">' + escapeHtml(t('providers.allDesc')) + '</span>' +
+      '</span>' +
+      '<span class="provider-card-count">' + escapeHtml(t('providers.accountCount', total)) + '</span>' +
+      '</button>';
+    const providerCards = PROVIDER_NAV.map(p => {
+      const n = counts[p.key] || 0;
+      const countLabel = t('providers.accountCount', n);
+      return '<button type="button" class="provider-card" data-view="provider:' + p.key + '">' +
+        '<span class="provider-card-icon" style="background:' + escapeAttr(p.color) + '">' +
+        '<i class="' + p.icon + '" aria-hidden="true"></i></span>' +
+        '<span class="provider-card-body">' +
+        '<span class="provider-card-name">' + escapeHtml(t(p.labelKey)) + '</span>' +
+        '<span class="provider-card-desc">' + escapeHtml(t(p.descKey)) + '</span>' +
+        '</span>' +
+        '<span class="provider-card-count">' + escapeHtml(countLabel) + '</span>' +
+        '</button>';
+    }).join('');
+    container.innerHTML = allCard + providerCards;
   }
 
   // renderUsageView builds a per-account token/credits/requests table from the
@@ -546,12 +570,22 @@ import {
     $('logoutBtn').addEventListener('click', logout);
 
     // Sidebar nav uses delegation because provider entries are rendered
-    // dynamically by renderProviderNav().
+    // dynamically (provider buckets are reached via the Providers landing grid).
     const nav = $('sidebarNav');
     if (nav) nav.addEventListener('click', e => {
       const item = e.target.closest('.nav-item');
       if (item && item.dataset.view) switchView(item.dataset.view);
     });
+
+    // Providers landing grid: cards carry data-view="provider:<key>".
+    const grid = $('providerGrid');
+    if (grid) grid.addEventListener('click', e => {
+      const card = e.target.closest('.provider-card');
+      if (card && card.dataset.view) switchView(card.dataset.view);
+    });
+    const backBtn = $('backToProvidersBtn');
+    if (backBtn) backBtn.addEventListener('click', () => switchView('providers'));
+
     const sbToggle = $('sidebarToggle');
     if (sbToggle) sbToggle.addEventListener('click', openSidebar);
     const sbClose = $('sidebarClose');

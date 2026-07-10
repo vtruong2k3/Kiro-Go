@@ -167,3 +167,203 @@ func TestResolveGrokModel(t *testing.T) {
 		t.Errorf("grok-3 -> %q", got)
 	}
 }
+
+// TestClaudeToOpenAI_SanitizesNullSchemaFields covers the xAI 400:
+//
+//	Schema validation failed: (root): null is not of types "boolean", "object"
+//
+// which clients trigger by emitting additionalProperties:null (and similar
+// null schema fields) inside tool input_schema.
+func TestClaudeToOpenAI_SanitizesNullSchemaFields(t *testing.T) {
+	req := &ClaudeRequest{
+		Model: "grok-4.5",
+		Messages: []ClaudeMessage{
+			{Role: "user", Content: "use tools"},
+		},
+		Tools: []ClaudeTool{
+			{
+				Name:        "read_file",
+				Description: "Read a file",
+				InputSchema: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"path": map[string]interface{}{
+							"type":                 "string",
+							"description":          "file path",
+							"additionalProperties": nil, // ← the bad value
+						},
+						"options": map[string]interface{}{
+							"type":                 []interface{}{"object", "null"},
+							"additionalProperties": nil,
+							"properties": map[string]interface{}{
+								"offset": map[string]interface{}{
+									"type":    []interface{}{"integer", "null"},
+									"minimum": nil,
+								},
+							},
+							"required": []interface{}{"offset", nil, ""},
+						},
+					},
+					"additionalProperties": nil,
+					"required":             []interface{}{"path"},
+					"items":                nil,
+				},
+			},
+			{
+				Name:        "noop",
+				Description: "no params",
+				InputSchema: nil,
+			},
+		},
+	}
+
+	body, err := ClaudeToOpenAI(req, false)
+	if err != nil {
+		t.Fatalf("ClaudeToOpenAI: %v", err)
+	}
+
+	tools, ok := body["tools"].([]map[string]interface{})
+	if !ok || len(tools) != 2 {
+		t.Fatalf("tools = %#v", body["tools"])
+	}
+
+	// Walk the marshaled JSON and assert no null values remain anywhere under tools.
+	raw, err := json.Marshal(tools)
+	if err != nil {
+		t.Fatalf("marshal tools: %v", err)
+	}
+	var decoded interface{}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("unmarshal tools: %v", err)
+	}
+	if n := countNulls(decoded); n != 0 {
+		t.Fatalf("expected 0 nulls in sanitized tools, found %d\n%s", n, string(raw))
+	}
+
+	fn0 := tools[0]["function"].(map[string]interface{})
+	params0 := fn0["parameters"].(map[string]interface{})
+	if _, still := params0["additionalProperties"]; still {
+		t.Fatalf("root additionalProperties should be dropped when null, got %#v", params0["additionalProperties"])
+	}
+	if _, still := params0["items"]; still {
+		t.Fatalf("null items should be dropped, got %#v", params0["items"])
+	}
+
+	props := params0["properties"].(map[string]interface{})
+	pathSchema := props["path"].(map[string]interface{})
+	if _, still := pathSchema["additionalProperties"]; still {
+		t.Fatalf("nested additionalProperties:null should be dropped, got %#v", pathSchema)
+	}
+
+	options := props["options"].(map[string]interface{})
+	// type: ["object","null"] → "object"
+	if options["type"] != "object" {
+		t.Fatalf("options.type = %#v, want \"object\"", options["type"])
+	}
+	reqList, _ := options["required"].([]interface{})
+	if len(reqList) != 1 || reqList[0] != "offset" {
+		t.Fatalf("options.required = %#v, want [offset]", reqList)
+	}
+
+	// nil InputSchema → empty object schema
+	fn1 := tools[1]["function"].(map[string]interface{})
+	params1 := fn1["parameters"].(map[string]interface{})
+	if params1["type"] != "object" {
+		t.Fatalf("noop parameters type = %#v", params1["type"])
+	}
+	if _, ok := params1["properties"].(map[string]interface{}); !ok {
+		t.Fatalf("noop parameters missing properties: %#v", params1)
+	}
+}
+
+func TestOpenAIToOpenAI_SanitizesNullSchemaFields(t *testing.T) {
+	req := &OpenAIRequest{
+		Model: "grok-4.5",
+		Messages: []OpenAIMessage{
+			{Role: "user", Content: "hi"},
+		},
+		Tools: []OpenAITool{
+			{
+				Type: "function",
+			},
+		},
+	}
+	// Set nested function fields via the UnmarshalJSON-compatible path: build
+	// the tool through JSON so the embedded struct is populated cleanly.
+	rawTool := []byte(`{
+		"type":"function",
+		"function":{
+			"name":"exec_command",
+			"description":"Run a shell command",
+			"parameters":{
+				"type":"object",
+				"properties":{
+					"cmd":{"type":"string","additionalProperties":null}
+				},
+				"additionalProperties":null
+			}
+		}
+	}`)
+	if err := json.Unmarshal(rawTool, &req.Tools[0]); err != nil {
+		t.Fatalf("unmarshal tool: %v", err)
+	}
+
+	body, err := OpenAIToOpenAI(req)
+	if err != nil {
+		t.Fatalf("OpenAIToOpenAI: %v", err)
+	}
+
+	raw, err := json.Marshal(body["tools"])
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var decoded interface{}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if n := countNulls(decoded); n != 0 {
+		t.Fatalf("expected 0 nulls in sanitized OpenAI tools, found %d\n%s", n, string(raw))
+	}
+}
+
+func TestSanitizeGrokToolParameters_PreservesBoolAdditionalProperties(t *testing.T) {
+	in := map[string]interface{}{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]interface{}{
+			"x": map[string]interface{}{"type": "string"},
+		},
+	}
+	out, ok := sanitizeGrokToolParameters(in).(map[string]interface{})
+	if !ok {
+		t.Fatalf("got %T", sanitizeGrokToolParameters(in))
+	}
+	if out["additionalProperties"] != false {
+		t.Fatalf("additionalProperties = %#v, want false", out["additionalProperties"])
+	}
+	// Caller schema must not be mutated.
+	if in["additionalProperties"] != false {
+		t.Fatalf("sanitizer mutated input")
+	}
+}
+
+func countNulls(v interface{}) int {
+	switch val := v.(type) {
+	case nil:
+		return 1
+	case map[string]interface{}:
+		n := 0
+		for _, child := range val {
+			n += countNulls(child)
+		}
+		return n
+	case []interface{}:
+		n := 0
+		for _, child := range val {
+			n += countNulls(child)
+		}
+		return n
+	default:
+		return 0
+	}
+}
