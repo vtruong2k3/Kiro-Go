@@ -910,6 +910,66 @@ import {
     $('saveProxyBtn').addEventListener('click', saveProxyConfig);
     $('resetStatsBtn').addEventListener('click', resetStats);
     bindApiKeyEvents();
+    bindSettingsPageNav();
+    bindSettingsPasswordToggle();
+  }
+
+  function bindSettingsPasswordToggle() {
+    const pwdToggle = $('settingsPwdToggle');
+    if (!pwdToggle) return;
+    pwdToggle.addEventListener('click', () => {
+      const f = $('newPassword');
+      if (!f || f.disabled) return;
+      const willShow = f.type === 'password';
+      f.type = willShow ? 'text' : 'password';
+      pwdToggle.dataset.shown = String(willShow);
+      pwdToggle.setAttribute('aria-label', willShow ? t('login.hidePassword') : t('login.showPassword'));
+      pwdToggle.innerHTML = willShow
+        ? '<i class="fa-solid fa-eye-slash" aria-hidden="true"></i>'
+        : '<i class="fa-solid fa-eye" aria-hidden="true"></i>';
+    });
+  }
+
+  function bindSettingsPageNav() {
+    const nav = $('settingsNav');
+    const root = $('viewSettings');
+    if (!nav || !root) return;
+
+    const buttons = Array.from(nav.querySelectorAll('[data-settings-section]'));
+    const sections = Array.from(root.querySelectorAll('.settings-section[data-settings-section]'));
+    if (!buttons.length || !sections.length) return;
+
+    const setActive = (key) => {
+      buttons.forEach(btn => {
+        btn.classList.toggle('is-active', btn.dataset.settingsSection === key);
+      });
+    };
+
+    nav.addEventListener('click', e => {
+      const btn = e.target.closest('[data-settings-section]');
+      if (!btn || !nav.contains(btn)) return;
+      const key = btn.dataset.settingsSection;
+      const target = root.querySelector('.settings-section[data-settings-section="' + key + '"]');
+      if (!target) return;
+      setActive(key);
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+
+    if (typeof IntersectionObserver === 'function') {
+      const observer = new IntersectionObserver((entries) => {
+        const visible = entries
+          .filter(en => en.isIntersecting)
+          .sort((a, b) => b.intersectionRatio - a.intersectionRatio);
+        if (!visible.length) return;
+        const key = visible[0].target.dataset.settingsSection;
+        if (key) setActive(key);
+      }, {
+        root: null,
+        rootMargin: '-20% 0px -55% 0px',
+        threshold: [0.15, 0.35, 0.55, 0.75]
+      });
+      sections.forEach(sec => observer.observe(sec));
+    }
   }
 
   function bindPromptFilterEvents() {

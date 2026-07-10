@@ -451,159 +451,286 @@
 
       <!-- Settings view -->
       <div id="viewSettings" class="view hidden">
-        <!-- Usage settings -->
-        <div class="card">
-          <div class="card-header"><span class="card-title" data-i18n="settings.usageSettings"></span></div>
-          <div class="form-group">
-            <label class="flex items-center gap-2">
-              <span class="switch"><input type="checkbox" id="allowOverUsage" /><span class="slider"></span></span>
-              <span data-i18n="settings.allowOverUsage"></span>
-            </label>
-            <small data-i18n="settings.allowOverUsageHint"></small>
-          </div>
-          <button class="btn btn-primary" id="saveOverUsageBtn" data-i18n="settings.saveUsage"></button>
-        </div>
+        <div class="settings-page">
+          <p class="settings-intro" data-i18n="settings.pageSubtitle"></p>
+          <div class="settings-layout">
+            <nav class="settings-nav" id="settingsNav" aria-label="" data-i18n-aria-label="tabs.settings">
+              <button type="button" class="settings-nav-btn is-active" data-settings-section="usage">
+                <i class="fa-solid fa-gauge-high" aria-hidden="true"></i>
+                <span data-i18n="settings.navUsage"></span>
+              </button>
+              <button type="button" class="settings-nav-btn" data-settings-section="thinking">
+                <i class="fa-solid fa-brain" aria-hidden="true"></i>
+                <span data-i18n="settings.navThinking"></span>
+              </button>
+              <button type="button" class="settings-nav-btn" data-settings-section="endpoint">
+                <i class="fa-solid fa-network-wired" aria-hidden="true"></i>
+                <span data-i18n="settings.navEndpoint"></span>
+              </button>
+              <button type="button" class="settings-nav-btn" data-settings-section="password">
+                <i class="fa-solid fa-lock" aria-hidden="true"></i>
+                <span data-i18n="settings.navPassword"></span>
+              </button>
+              <button type="button" class="settings-nav-btn" data-settings-section="proxy">
+                <i class="fa-solid fa-shield-halved" aria-hidden="true"></i>
+                <span data-i18n="settings.navProxy"></span>
+              </button>
+              <button type="button" class="settings-nav-btn" data-settings-section="prompt-filter">
+                <i class="fa-solid fa-filter" aria-hidden="true"></i>
+                <span data-i18n="settings.navPromptFilter"></span>
+              </button>
+              <button type="button" class="settings-nav-btn" data-settings-section="danger">
+                <i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
+                <span data-i18n="settings.navDanger"></span>
+              </button>
+            </nav>
 
-        <!-- Thinking settings -->
-        <div class="card">
-          <div class="card-header"><span class="card-title" data-i18n="settings.thinkingSettings"></span></div>
-          <div class="form-group">
-            <label data-i18n="settings.thinkingSuffix"></label>
-            <input type="text" id="thinkingSuffix" placeholder="-thinking" />
-            <small data-i18n="settings.thinkingSuffixHint"></small>
-          </div>
-          <div class="form-group">
-            <label data-i18n="settings.openaiFormat"></label>
-            <select id="openaiThinkingFormat">
-              <option value="reasoning_content" data-i18n="settings.formatReasoningContent"></option>
-              <option value="thinking" data-i18n="settings.formatThinkingClaude"></option>
-              <option value="think" data-i18n="settings.formatThinkOpenAI"></option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label data-i18n="settings.claudeFormat"></label>
-            <select id="claudeThinkingFormat">
-              <option value="thinking" data-i18n="settings.formatThinkingClaude"></option>
-              <option value="think" data-i18n="settings.formatThinkOpenAI"></option>
-            </select>
-          </div>
-          <button class="btn btn-primary" id="saveThinkingBtn" data-i18n="settings.saveThinking"></button>
-        </div>
+            <div class="settings-panels">
+              <!-- Usage settings -->
+              <section id="settings-usage" class="settings-section" data-settings-section="usage">
+                <div class="settings-card">
+                  <div class="settings-card-header">
+                    <span class="settings-card-icon" aria-hidden="true"><i class="fa-solid fa-gauge-high"></i></span>
+                    <div class="settings-card-heading">
+                      <span class="card-title" data-i18n="settings.usageSettings"></span>
+                      <p class="settings-card-desc" data-i18n="settings.usageDesc"></p>
+                    </div>
+                  </div>
+                  <div class="settings-card-body">
+                    <div class="settings-row">
+                      <div class="settings-row-text">
+                        <p class="settings-row-title" data-i18n="settings.allowOverUsage"></p>
+                        <p class="settings-row-hint" data-i18n="settings.allowOverUsageHint"></p>
+                      </div>
+                      <span class="switch"><input type="checkbox" id="allowOverUsage" /><span class="slider"></span></span>
+                    </div>
+                  </div>
+                  <div class="settings-card-footer">
+                    <button class="btn btn-primary btn-sm" id="saveOverUsageBtn" type="button" data-i18n="settings.saveUsage"></button>
+                  </div>
+                </div>
+              </section>
 
-        <!-- Endpoint settings -->
-        <div class="card">
-          <div class="card-header"><span class="card-title" data-i18n="settings.endpointSettings"></span></div>
-          <div class="form-group">
-            <label data-i18n="settings.preferredEndpoint"></label>
-            <select id="preferredEndpoint">
-              <option value="auto" data-i18n="settings.endpointAuto"></option>
-              <option value="kiro" data-i18n="settings.endpointKiro"></option>
-              <option value="codewhisperer" data-i18n="settings.endpointCodeWhisperer"></option>
-              <option value="amazonq" data-i18n="settings.endpointAmazonQ"></option>
-            </select>
-            <small data-i18n="settings.endpointHint"></small>
-          </div>
-          <div class="form-group">
-            <label class="flex items-center gap-2">
-              <span class="switch"><input type="checkbox" id="endpointFallback" checked /><span
-                  class="slider"></span></span>
-              <span data-i18n="settings.endpointFallback"></span>
-            </label>
-            <small data-i18n="settings.endpointFallbackHint"></small>
-          </div>
-          <button class="btn btn-primary" id="saveEndpointBtn" data-i18n="settings.saveEndpoint"></button>
-        </div>
+              <!-- Thinking settings -->
+              <section id="settings-thinking" class="settings-section" data-settings-section="thinking">
+                <div class="settings-card">
+                  <div class="settings-card-header">
+                    <span class="settings-card-icon" aria-hidden="true"><i class="fa-solid fa-brain"></i></span>
+                    <div class="settings-card-heading">
+                      <span class="card-title" data-i18n="settings.thinkingSettings"></span>
+                      <p class="settings-card-desc" data-i18n="settings.thinkingDesc"></p>
+                    </div>
+                  </div>
+                  <div class="settings-card-body">
+                    <div class="form-group">
+                      <label for="thinkingSuffix" data-i18n="settings.thinkingSuffix"></label>
+                      <input type="text" id="thinkingSuffix" placeholder="-thinking" />
+                      <small data-i18n="settings.thinkingSuffixHint"></small>
+                    </div>
+                    <div class="settings-fields-grid">
+                      <div class="form-group">
+                        <label for="openaiThinkingFormat" data-i18n="settings.openaiFormat"></label>
+                        <select id="openaiThinkingFormat">
+                          <option value="reasoning_content" data-i18n="settings.formatReasoningContent"></option>
+                          <option value="thinking" data-i18n="settings.formatThinkingClaude"></option>
+                          <option value="think" data-i18n="settings.formatThinkOpenAI"></option>
+                        </select>
+                      </div>
+                      <div class="form-group">
+                        <label for="claudeThinkingFormat" data-i18n="settings.claudeFormat"></label>
+                        <select id="claudeThinkingFormat">
+                          <option value="thinking" data-i18n="settings.formatThinkingClaude"></option>
+                          <option value="think" data-i18n="settings.formatThinkOpenAI"></option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="settings-card-footer">
+                    <button class="btn btn-primary btn-sm" id="saveThinkingBtn" type="button" data-i18n="settings.saveThinking"></button>
+                  </div>
+                </div>
+              </section>
 
-        <!-- Admin password -->
-        <div class="card">
-          <div class="card-header"><span class="card-title" data-i18n="settings.adminPassword"></span></div>
-          <div class="form-group">
-            <label data-i18n="settings.newPassword"></label>
-            <input type="password" id="newPassword" data-i18n-placeholder="settings.newPasswordPlaceholder" />
-          </div>
-          <button class="btn btn-primary" id="changePasswordBtn" data-i18n="settings.changePassword"></button>
-        </div>
+              <!-- Endpoint settings -->
+              <section id="settings-endpoint" class="settings-section" data-settings-section="endpoint">
+                <div class="settings-card">
+                  <div class="settings-card-header">
+                    <span class="settings-card-icon" aria-hidden="true"><i class="fa-solid fa-network-wired"></i></span>
+                    <div class="settings-card-heading">
+                      <span class="card-title" data-i18n="settings.endpointSettings"></span>
+                      <p class="settings-card-desc" data-i18n="settings.endpointDesc"></p>
+                    </div>
+                  </div>
+                  <div class="settings-card-body">
+                    <div class="form-group">
+                      <label for="preferredEndpoint" data-i18n="settings.preferredEndpoint"></label>
+                      <select id="preferredEndpoint">
+                        <option value="auto" data-i18n="settings.endpointAuto"></option>
+                        <option value="kiro" data-i18n="settings.endpointKiro"></option>
+                        <option value="codewhisperer" data-i18n="settings.endpointCodeWhisperer"></option>
+                        <option value="amazonq" data-i18n="settings.endpointAmazonQ"></option>
+                      </select>
+                      <small data-i18n="settings.endpointHint"></small>
+                    </div>
+                    <div class="settings-row">
+                      <div class="settings-row-text">
+                        <p class="settings-row-title" data-i18n="settings.endpointFallback"></p>
+                        <p class="settings-row-hint" data-i18n="settings.endpointFallbackHint"></p>
+                      </div>
+                      <span class="switch"><input type="checkbox" id="endpointFallback" checked /><span class="slider"></span></span>
+                    </div>
+                  </div>
+                  <div class="settings-card-footer">
+                    <button class="btn btn-primary btn-sm" id="saveEndpointBtn" type="button" data-i18n="settings.saveEndpoint"></button>
+                  </div>
+                </div>
+              </section>
 
-        <!-- Outbound proxy -->
-        <div class="card">
-          <div class="card-header"><span class="card-title" data-i18n="settings.proxySettings"></span></div>
-          <div class="form-group">
-            <label data-i18n="settings.proxyType"></label>
-            <select id="proxyType">
-              <option value="none" data-i18n="settings.proxyNone"></option>
-              <option value="socks5" data-i18n="settings.proxySocks5"></option>
-              <option value="http" data-i18n="settings.proxyHttp"></option>
-            </select>
-          </div>
-          <div id="proxyFields" class="hidden">
-            <div class="form-group">
-              <label data-i18n="settings.proxyHost"></label>
-              <div class="input-row">
-                <input type="text" id="proxyHost" placeholder="127.0.0.1" />
-                <input type="number" id="proxyPort" class="w-24!" placeholder="1080" min="1" max="65535" />
-              </div>
+              <!-- Admin password -->
+              <section id="settings-password" class="settings-section" data-settings-section="password">
+                <div class="settings-card">
+                  <div class="settings-card-header">
+                    <span class="settings-card-icon" aria-hidden="true"><i class="fa-solid fa-lock"></i></span>
+                    <div class="settings-card-heading">
+                      <span class="card-title" data-i18n="settings.adminPassword"></span>
+                      <p class="settings-card-desc" data-i18n="settings.passwordDesc"></p>
+                    </div>
+                  </div>
+                  <div class="settings-card-body">
+                    <div class="form-group settings-password-field">
+                      <label for="newPassword" data-i18n="settings.newPassword"></label>
+                      <div class="input-affix">
+                        <i class="fa-solid fa-key affix-icon" aria-hidden="true"></i>
+                        <input type="password" id="newPassword" data-i18n-placeholder="settings.newPasswordPlaceholder" autocomplete="new-password" />
+                        <button type="button" class="affix-btn" id="settingsPwdToggle" aria-label=""
+                          data-i18n-aria-label="login.showPassword" data-shown="false">
+                          <i class="fa-solid fa-eye" aria-hidden="true"></i>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="settings-card-footer">
+                    <button class="btn btn-primary btn-sm" id="changePasswordBtn" type="button" data-i18n="settings.changePassword"></button>
+                  </div>
+                </div>
+              </section>
+
+              <!-- Outbound proxy -->
+              <section id="settings-proxy" class="settings-section" data-settings-section="proxy">
+                <div class="settings-card">
+                  <div class="settings-card-header">
+                    <span class="settings-card-icon" aria-hidden="true"><i class="fa-solid fa-shield-halved"></i></span>
+                    <div class="settings-card-heading">
+                      <span class="card-title" data-i18n="settings.proxySettings"></span>
+                      <p class="settings-card-desc" data-i18n="settings.proxyDesc"></p>
+                    </div>
+                  </div>
+                  <div class="settings-card-body">
+                    <div class="form-group">
+                      <label for="proxyType" data-i18n="settings.proxyType"></label>
+                      <select id="proxyType">
+                        <option value="none" data-i18n="settings.proxyNone"></option>
+                        <option value="socks5" data-i18n="settings.proxySocks5"></option>
+                        <option value="http" data-i18n="settings.proxyHttp"></option>
+                      </select>
+                    </div>
+                    <div id="proxyFields" class="hidden">
+                      <div class="form-group">
+                        <label data-i18n="settings.proxyHost"></label>
+                        <div class="settings-proxy-grid">
+                          <input type="text" id="proxyHost" placeholder="127.0.0.1" />
+                          <input type="number" id="proxyPort" placeholder="1080" min="1" max="65535" />
+                        </div>
+                      </div>
+                      <div class="form-group">
+                        <label data-i18n="settings.proxyAuth"></label>
+                        <div class="input-row">
+                          <input type="text" id="proxyUsername" data-i18n-placeholder="settings.proxyUsername"
+                            autocomplete="off" />
+                          <input type="password" id="proxyPassword" data-i18n-placeholder="settings.proxyPassword"
+                            autocomplete="new-password" />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="settings-card-footer">
+                    <button class="btn btn-primary btn-sm" id="saveProxyBtn" type="button" data-i18n="settings.saveProxy"></button>
+                  </div>
+                </div>
+              </section>
+
+              <!-- Prompt filter -->
+              <section id="settings-prompt-filter" class="settings-section" data-settings-section="prompt-filter">
+                <div class="settings-card">
+                  <div class="settings-card-header">
+                    <span class="settings-card-icon" aria-hidden="true"><i class="fa-solid fa-filter"></i></span>
+                    <div class="settings-card-heading">
+                      <span class="card-title" data-i18n="settings.promptFilter"></span>
+                      <p class="settings-card-desc" data-i18n="settings.promptFilterDesc"></p>
+                    </div>
+                  </div>
+                  <div class="settings-card-body">
+                    <div class="settings-subsection">
+                      <h3 class="settings-subsection-title" data-i18n="settings.builtinFilters"></h3>
+                      <div class="settings-row">
+                        <div class="settings-row-text">
+                          <p class="settings-row-title" data-i18n="settings.filterClaudeCode"></p>
+                          <p class="settings-row-hint" data-i18n="settings.filterClaudeCodeHint"></p>
+                        </div>
+                        <span class="switch"><input type="checkbox" id="filterClaudeCode" /><span class="slider"></span></span>
+                      </div>
+                      <div class="settings-row">
+                        <div class="settings-row-text">
+                          <p class="settings-row-title" data-i18n="settings.filterEnvNoise"></p>
+                          <p class="settings-row-hint" data-i18n="settings.filterEnvNoiseHint"></p>
+                        </div>
+                        <span class="switch"><input type="checkbox" id="filterEnvNoise" /><span class="slider"></span></span>
+                      </div>
+                      <div class="settings-row">
+                        <div class="settings-row-text">
+                          <p class="settings-row-title" data-i18n="settings.filterStripBoundaries"></p>
+                          <p class="settings-row-hint" data-i18n="settings.filterStripBoundariesHint"></p>
+                        </div>
+                        <span class="switch"><input type="checkbox" id="filterStripBoundaries" /><span class="slider"></span></span>
+                      </div>
+                    </div>
+                    <div class="settings-subsection">
+                      <h3 class="settings-subsection-title" data-i18n="settings.customRules"></h3>
+                      <div id="promptFilterRules" class="settings-rules-host"></div>
+                      <div class="settings-subsection-actions">
+                        <button class="btn btn-outline btn-sm" id="addRuleRegexBtn" type="button" data-i18n="promptFilter.addRegex"></button>
+                        <button class="btn btn-outline btn-sm" id="addRuleContainsBtn" type="button" data-i18n="promptFilter.addContains"></button>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="settings-card-footer">
+                    <button class="btn btn-primary btn-sm" id="savePromptFilterBtn" type="button" data-i18n="settings.savePromptFilter"></button>
+                  </div>
+                </div>
+              </section>
+
+              <!-- Statistics / danger zone -->
+              <section id="settings-danger" class="settings-section settings-section--danger" data-settings-section="danger">
+                <div class="settings-card">
+                  <div class="settings-card-header">
+                    <span class="settings-card-icon" aria-hidden="true"><i class="fa-solid fa-triangle-exclamation"></i></span>
+                    <div class="settings-card-heading">
+                      <span class="card-title" data-i18n="settings.dangerTitle"></span>
+                      <p class="settings-card-desc" data-i18n="settings.statsDesc"></p>
+                    </div>
+                  </div>
+                  <div class="settings-card-body">
+                    <div class="settings-danger-body">
+                      <p class="settings-danger-hint" data-i18n="settings.dangerHint"></p>
+                    </div>
+                  </div>
+                  <div class="settings-card-footer">
+                    <button class="btn btn-danger btn-sm" id="resetStatsBtn" type="button" data-i18n="settings.resetStats"></button>
+                  </div>
+                </div>
+              </section>
             </div>
-            <div class="form-group">
-              <label data-i18n="settings.proxyAuth"></label>
-              <div class="input-row">
-                <input type="text" id="proxyUsername" data-i18n-placeholder="settings.proxyUsername"
-                  autocomplete="off" />
-                <input type="password" id="proxyPassword" data-i18n-placeholder="settings.proxyPassword"
-                  autocomplete="new-password" />
-              </div>
-            </div>
           </div>
-          <button class="btn btn-primary" id="saveProxyBtn" data-i18n="settings.saveProxy"></button>
-        </div>
-
-        <!-- Prompt filter -->
-        <div class="card">
-          <div class="card-header"><span class="card-title" data-i18n="settings.promptFilter"></span></div>
-          <div class="form-group">
-            <label class="font-semibold pb-2 block" data-i18n="settings.builtinFilters"></label>
-            <div class="flex flex-col gap-3">
-              <div>
-                <label class="flex items-center gap-2">
-                  <span class="switch"><input type="checkbox" id="filterClaudeCode" /><span
-                      class="slider"></span></span>
-                  <span data-i18n="settings.filterClaudeCode"></span>
-                </label>
-                <small class="field-hint-offset" data-i18n="settings.filterClaudeCodeHint"></small>
-              </div>
-              <div>
-                <label class="flex items-center gap-2">
-                  <span class="switch"><input type="checkbox" id="filterEnvNoise" /><span class="slider"></span></span>
-                  <span data-i18n="settings.filterEnvNoise"></span>
-                </label>
-                <small class="field-hint-offset" data-i18n="settings.filterEnvNoiseHint"></small>
-              </div>
-              <div>
-                <label class="flex items-center gap-2">
-                  <span class="switch"><input type="checkbox" id="filterStripBoundaries" /><span
-                      class="slider"></span></span>
-                  <span data-i18n="settings.filterStripBoundaries"></span>
-                </label>
-                <small class="field-hint-offset" data-i18n="settings.filterStripBoundariesHint"></small>
-              </div>
-            </div>
-          </div>
-          <div class="form-group mt-4">
-            <label class="font-semibold pb-2 block" data-i18n="settings.customRules"></label>
-            <div id="promptFilterRules" class="mb-2"></div>
-            <div class="flex gap-2 flex-wrap items-center">
-              <button class="btn btn-outline btn-sm" id="addRuleRegexBtn" data-i18n="promptFilter.addRegex"></button>
-              <button class="btn btn-outline btn-sm" id="addRuleContainsBtn"
-                data-i18n="promptFilter.addContains"></button>
-              <button class="btn btn-primary btn-sm" id="savePromptFilterBtn"
-                data-i18n="settings.savePromptFilter"></button>
-            </div>
-          </div>
-        </div>
-
-        <!-- Statistics reset -->
-        <div class="card">
-          <div class="card-header"><span class="card-title" data-i18n="settings.statistics"></span></div>
-          <button class="btn btn-danger" id="resetStatsBtn" data-i18n="settings.resetStats"></button>
         </div>
       </div>
 

@@ -4818,3 +4818,356 @@ img.brand-icon {
     padding: 0.75rem 0.85rem;
   }
 }
+
+/* ==================== Settings page ==================== */
+.settings-page {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-width: 0;
+}
+.settings-intro {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  max-width: 44rem;
+}
+.settings-layout {
+  display: grid;
+  grid-template-columns: minmax(12.5rem, 14rem) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+  min-width: 0;
+}
+.settings-nav {
+  position: sticky;
+  top: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  min-width: 0;
+}
+.settings-nav-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  width: 100%;
+  min-height: 2.25rem;
+  padding: 0.5rem 0.625rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--muted-foreground);
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 550;
+  line-height: 1.25;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
+}
+.settings-nav-btn i {
+  width: 1rem;
+  flex: none;
+  text-align: center;
+  font-size: 0.8125rem;
+  opacity: 0.9;
+}
+.settings-nav-btn:hover {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+.settings-nav-btn:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.settings-nav-btn.is-active {
+  background: color-mix(in oklab, var(--foreground) 8%, var(--card));
+  border-color: var(--border);
+  color: var(--foreground);
+  font-weight: 650;
+}
+.settings-nav-btn.is-active i {
+  opacity: 1;
+}
+.settings-panels {
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
+  min-width: 0;
+}
+.settings-section {
+  scroll-margin-top: 1rem;
+  min-width: 0;
+}
+.settings-card {
+  background: var(--card);
+  color: var(--card-foreground);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 1.15rem 1.35rem 1.1rem;
+  min-width: 0;
+}
+.settings-card-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding-bottom: 0.95rem;
+  margin-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+.settings-card-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--background);
+  color: var(--foreground);
+  flex: none;
+  font-size: 0.875rem;
+}
+.settings-card-heading {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.settings-card-heading .card-title {
+  margin: 0;
+  line-height: 1.3;
+}
+.settings-card-desc {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+.settings-card-body {
+  min-width: 0;
+}
+.settings-card-body > .form-group:last-child {
+  margin-bottom: 0;
+}
+.settings-card-footer {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 1.1rem;
+  padding-top: 0.95rem;
+  border-top: 1px solid var(--border);
+}
+.settings-card-footer .btn {
+  min-width: 7.5rem;
+}
+.settings-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid color-mix(in oklab, var(--border) 80%, transparent);
+}
+.settings-row:first-child {
+  padding-top: 0;
+}
+.settings-row:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+.settings-row-text {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.settings-row-title {
+  margin: 0;
+  color: var(--foreground);
+  font-size: 0.875rem;
+  font-weight: 550;
+  line-height: 1.35;
+}
+.settings-row-hint {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+.settings-row .switch {
+  flex: none;
+  margin-top: 0.15rem;
+}
+.settings-fields-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 0.875rem;
+  min-width: 0;
+}
+.settings-fields-grid .form-group {
+  min-width: 0;
+}
+.settings-subsection {
+  margin-top: 1.1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+.settings-subsection:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+.settings-subsection-title {
+  margin: 0 0 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 650;
+  color: var(--muted-foreground);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  line-height: 1.2;
+}
+.settings-subsection-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+.settings-proxy-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 7rem;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.settings-proxy-grid > input {
+  min-width: 0;
+  width: 100%;
+}
+.settings-password-field .input-affix {
+  width: 100%;
+}
+.settings-section--danger .settings-card {
+  border-color: color-mix(in oklab, var(--destructive) 35%, var(--border));
+  background: color-mix(in oklab, var(--destructive) 5%, var(--card));
+}
+.settings-section--danger .settings-card-icon {
+  color: var(--destructive);
+  border-color: color-mix(in oklab, var(--destructive) 35%, var(--border));
+  background: color-mix(in oklab, var(--destructive) 10%, var(--card));
+}
+.settings-danger-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.settings-danger-hint {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+.settings-section--danger .settings-card-footer {
+  justify-content: flex-start;
+}
+.settings-section--danger .settings-card-footer .btn {
+  min-width: 8.5rem;
+}
+
+#viewSettings .settings-card .form-group small {
+  display: block;
+  margin-top: 0.35rem;
+}
+#viewSettings .settings-card .form-group label {
+  margin-bottom: 0.35rem;
+}
+#viewSettings #promptFilterRules {
+  margin-bottom: 0;
+}
+#viewSettings #promptFilterRules:empty + .settings-subsection-actions,
+#viewSettings .settings-rules-host {
+  min-width: 0;
+}
+
+@media (max-width: 900px) {
+  .settings-layout {
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+  }
+  .settings-nav {
+    position: static;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: 0.375rem;
+    padding: 0.5rem;
+    scrollbar-width: thin;
+    -webkit-overflow-scrolling: touch;
+  }
+  .settings-nav-btn {
+    width: auto;
+    flex: 0 0 auto;
+    white-space: nowrap;
+    border-color: var(--border);
+    background: var(--background);
+    padding-inline: 0.75rem;
+  }
+  .settings-nav-btn.is-active {
+    background: var(--foreground);
+    border-color: var(--foreground);
+    color: var(--background);
+  }
+  .settings-fields-grid {
+    grid-template-columns: 1fr;
+  }
+  .settings-proxy-grid {
+    grid-template-columns: 1fr;
+  }
+  .settings-card {
+    padding: 1rem 1rem 0.95rem;
+  }
+  .settings-card-footer {
+    justify-content: stretch;
+  }
+  .settings-card-footer .btn {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .settings-row {
+    gap: 0.75rem;
+  }
+}
+
+@media (max-width: 520px) {
+  .settings-card-header {
+    gap: 0.625rem;
+  }
+  .settings-card-icon {
+    width: 2rem;
+    height: 2rem;
+    font-size: 0.8125rem;
+  }
+  .settings-subsection-actions .btn {
+    flex: 1 1 calc(50% - 0.25rem);
+    min-width: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-nav-btn {
+    transition: none;
+  }
+}
