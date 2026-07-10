@@ -269,12 +269,16 @@
         <div class="overview-key-visuals">
           <section class="overview-key-panel" aria-labelledby="apiKeyStatusTitle">
             <h3 id="apiKeyStatusTitle" class="overview-key-panel-title" data-i18n="stats.apiKeysStatusTitle"></h3>
-            <div id="apiKeyStatusBar" class="overview-status-bar" role="img" aria-label=""></div>
+            <div class="overview-status-chart-wrap">
+              <canvas id="apiKeyStatusChart" aria-label="" role="img"></canvas>
+            </div>
             <ul id="apiKeyStatusLegend" class="overview-status-legend"></ul>
           </section>
           <section class="overview-key-panel" aria-labelledby="apiKeyCreatedTitle">
             <h3 id="apiKeyCreatedTitle" class="overview-key-panel-title" data-i18n="stats.apiKeysCreatedTitle"></h3>
-            <div id="apiKeyCreatedChart" class="overview-created-chart" role="img" aria-label=""></div>
+            <div class="overview-created-chart-wrap">
+              <canvas id="apiKeyCreatedChart" aria-label="" role="img"></canvas>
+            </div>
             <p id="apiKeyCreatedSummary" class="overview-created-summary muted-text"></p>
           </section>
         </div>
@@ -883,10 +887,23 @@
       var t = document.createElement('script');
       t.src = '/admin/toast.js?v=' + v;
       document.body.appendChild(t);
-      var s = document.createElement('script');
-      s.type = 'module';
-      s.src = '/admin/app.js?v=' + v;
-      document.body.appendChild(s);
+      // Chart.js (vanilla) for overview API-key visuals — loaded before app module.
+      var c = document.createElement('script');
+      c.src = '/admin/vendor/chart.js/chart.umd.min.js?v=' + v;
+      c.onload = function () {
+        var s = document.createElement('script');
+        s.type = 'module';
+        s.src = '/admin/app.js?v=' + v;
+        document.body.appendChild(s);
+      };
+      c.onerror = function () {
+        // Fail-open: app still works without charts.
+        var s = document.createElement('script');
+        s.type = 'module';
+        s.src = '/admin/app.js?v=' + v;
+        document.body.appendChild(s);
+      };
+      document.body.appendChild(c);
     })();
   </script>
 </body>

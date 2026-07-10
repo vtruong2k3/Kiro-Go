@@ -8,6 +8,7 @@ import (
 	"kiro-go/config"
 	"kiro-go/logger"
 	"kiro-go/pool"
+	"kiro-go/store"
 	"net/http"
 	"strings"
 	"sync"
@@ -36,6 +37,8 @@ type RequestLog struct {
 }
 
 const requestLogsMaxSize = 500
+const requestLogsDBMax = 10000
+const requestLogsPendingMax = 2000
 
 // Handler HTTP 处理器
 type Handler struct {
@@ -50,6 +53,7 @@ type Handler struct {
 	startTime       int64
 	stopRefresh     chan struct{}
 	stopStatsSaver  chan struct{}
+	stopRuntime     chan struct{}
 	// 模型缓存
 	cachedModels    []ModelInfo
 	modelsCacheMu   sync.RWMutex
@@ -59,7 +63,11 @@ type Handler struct {
 	// 请求日志 (环形缓冲区，包含成功和失败)
 	requestLogs   []RequestLog
 	requestLogsMu sync.RWMutex
-	// Per-API-key client IP stats (memory only; not persisted).
+	// Pending logs waiting for SQLite flush (capped).
+	logPending []RequestLog
+	// Runtime SQLite store (nil = fail-open, RAM-only).
+	runtimeStore *store.Store
+	// Per-API-key client IP stats (lifetime flushed to store; RPM is RAM-only).
 	ipTrack *ipTracker
 }
 
@@ -247,16 +255,86 @@ func NewHandler() *Handler {
 		startTime:       time.Now().Unix(),
 		stopRefresh:     make(chan struct{}),
 		stopStatsSaver:  make(chan struct{}),
+		stopRuntime:     make(chan struct{}),
 		promptCache:     newPromptCacheTracker(defaultPromptCacheTTL),
 		ipTrack:         newIPTracker(),
 	}
+
+	// Runtime SQLite (logs + key IP lifetime). Fail-open on error.
+	dbPath := store.ResolvePath(config.GetConfigDir())
+	if st, err := store.Open(dbPath); err != nil {
+		logger.Warnf("runtime store unavailable (RAM-only logs/IPs): %v", err)
+	} else {
+		h.runtimeStore = st
+		h.hydrateFromStore()
+		logger.Infof("runtime store ready: %s", dbPath)
+	}
+
 	// 启动后台刷新
 	go h.backgroundRefresh()
 	// 启动后台统计保存 (每30秒保存一次)
 	go h.backgroundStatsSaver()
+	// Persist request logs + key IP stats
+	go h.backgroundRuntimeFlusher()
 	// 清理过期的 stored responses（>30 天）
 	go purgeExpiredResponses(responsesDefaultTTL)
 	return h
+}
+
+// hydrateFromStore loads recent logs and key IP lifetime into RAM.
+func (h *Handler) hydrateFromStore() {
+	if h == nil || h.runtimeStore == nil {
+		return
+	}
+	if rows, err := h.runtimeStore.LoadRecentRequestLogs(requestLogsMaxSize); err != nil {
+		logger.Warnf("load request logs: %v", err)
+	} else if len(rows) > 0 {
+		h.requestLogsMu.Lock()
+		h.requestLogs = make([]RequestLog, 0, len(rows))
+		for _, r := range rows {
+			h.requestLogs = append(h.requestLogs, requestLogFromRow(r))
+		}
+		h.requestLogsMu.Unlock()
+	}
+	if ipMap, err := h.runtimeStore.LoadKeyIPStats(); err != nil {
+		logger.Warnf("load key IP stats: %v", err)
+	} else if h.ipTrack != nil {
+		h.ipTrack.hydrate(ipMap)
+	}
+}
+
+func requestLogFromRow(r store.RequestLogRow) RequestLog {
+	return RequestLog{
+		Time:      r.Time,
+		Endpoint:  r.Endpoint,
+		Model:     r.Model,
+		AccountID: r.AccountID,
+		Status:    r.Status,
+		Error:     r.Error,
+		ErrorType: r.ErrorType,
+		Tokens:    r.Tokens,
+		Credits:   r.Credits,
+		Duration:  r.Duration,
+		ClientIP:  r.ClientIP,
+		ApiKeyID:  r.ApiKeyID,
+	}
+}
+
+func requestLogToRow(e RequestLog) store.RequestLogRow {
+	return store.RequestLogRow{
+		Time:      e.Time,
+		Endpoint:  e.Endpoint,
+		Model:     e.Model,
+		AccountID: e.AccountID,
+		Status:    e.Status,
+		Error:     e.Error,
+		ErrorType: e.ErrorType,
+		Tokens:    e.Tokens,
+		Credits:   e.Credits,
+		Duration:  e.Duration,
+		ClientIP:  e.ClientIP,
+		ApiKeyID:  e.ApiKeyID,
+	}
 }
 
 // backgroundRefresh 后台定时刷新账户信息
@@ -1434,6 +1512,86 @@ func (h *Handler) backgroundStatsSaver() {
 	}
 }
 
+// backgroundRuntimeFlusher batches request logs and key IP lifetime into SQLite.
+func (h *Handler) backgroundRuntimeFlusher() {
+	logTicker := time.NewTicker(2 * time.Second)
+	ipTicker := time.NewTicker(15 * time.Second)
+	defer logTicker.Stop()
+	defer ipTicker.Stop()
+
+	for {
+		select {
+		case <-logTicker.C:
+			h.flushRequestLogs()
+		case <-ipTicker.C:
+			h.flushKeyIPStats()
+		case <-h.stopRuntime:
+			h.flushRequestLogs()
+			h.flushKeyIPStats()
+			if h.runtimeStore != nil {
+				_ = h.runtimeStore.Close()
+				h.runtimeStore = nil
+			}
+			return
+		}
+	}
+}
+
+func (h *Handler) flushRequestLogs() {
+	if h == nil || h.runtimeStore == nil {
+		return
+	}
+	h.requestLogsMu.Lock()
+	if len(h.logPending) == 0 {
+		h.requestLogsMu.Unlock()
+		return
+	}
+	batch := h.logPending
+	h.logPending = make([]RequestLog, 0, 64)
+	h.requestLogsMu.Unlock()
+
+	rows := make([]store.RequestLogRow, len(batch))
+	for i, e := range batch {
+		rows[i] = requestLogToRow(e)
+	}
+	if err := h.runtimeStore.InsertRequestLogs(rows); err != nil {
+		logger.Warnf("flush request logs: %v", err)
+		// Put back on failure (best-effort; may reorder slightly).
+		h.requestLogsMu.Lock()
+		h.logPending = append(batch, h.logPending...)
+		if len(h.logPending) > requestLogsPendingMax {
+			h.logPending = h.logPending[len(h.logPending)-requestLogsPendingMax:]
+		}
+		h.requestLogsMu.Unlock()
+		return
+	}
+	if err := h.runtimeStore.PruneRequestLogs(requestLogsDBMax); err != nil {
+		logger.Warnf("prune request logs: %v", err)
+	}
+}
+
+func (h *Handler) flushKeyIPStats() {
+	if h == nil || h.runtimeStore == nil || h.ipTrack == nil {
+		return
+	}
+	if !h.ipTrack.isDirty() {
+		return
+	}
+	rows := h.ipTrack.snapshotAllForFlush()
+	// Group by key and replace so evicted IPs are removed from DB.
+	byKey := map[string][]store.KeyIPRow{}
+	for _, r := range rows {
+		byKey[r.KeyID] = append(byKey[r.KeyID], r)
+	}
+	for keyID, list := range byKey {
+		if err := h.runtimeStore.ReplaceKeyIPStats(keyID, list); err != nil {
+			logger.Warnf("replace key IP stats %s: %v", keyID, err)
+			return
+		}
+	}
+	h.ipTrack.markClean()
+}
+
 // saveStats 保存统计到配置文件
 func (h *Handler) saveStats() {
 	config.UpdateStats(
@@ -1542,6 +1700,14 @@ func (h *Handler) appendRequestLog(entry RequestLog) {
 		h.requestLogs = h.requestLogs[1:]
 	}
 	h.requestLogs = append(h.requestLogs, entry)
+	// Queue for SQLite flush (capped under flood).
+	if h.logPending == nil {
+		h.logPending = make([]RequestLog, 0, 64)
+	}
+	if len(h.logPending) >= requestLogsPendingMax {
+		h.logPending = h.logPending[1:]
+	}
+	h.logPending = append(h.logPending, entry)
 	h.requestLogsMu.Unlock()
 }
 
@@ -4103,7 +4269,16 @@ func (h *Handler) apiGetLogs(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) apiClearLogs(w http.ResponseWriter, r *http.Request) {
 	h.requestLogsMu.Lock()
 	h.requestLogs = h.requestLogs[:0]
+	h.logPending = h.logPending[:0]
 	h.requestLogsMu.Unlock()
+	if h.runtimeStore != nil {
+		if err := h.runtimeStore.ClearRequestLogs(); err != nil {
+			logger.Warnf("clear request logs db: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 

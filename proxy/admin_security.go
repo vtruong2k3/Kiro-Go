@@ -88,11 +88,14 @@ func (h *Handler) apiGetApiKeyIPs(w http.ResponseWriter, r *http.Request, id str
 		return
 	}
 	ips := []keyIPStat{}
+	var rpm int64
 	if h != nil && h.ipTrack != nil {
 		ips = h.ipTrack.snapshot(id)
+		rpm = h.ipTrack.keyRPMValue(id)
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"ips":          ips,
-		"uniqueCount":  len(ips),
+		"ips":         ips,
+		"uniqueCount": len(ips),
+		"rpm":         rpm,
 	})
 }

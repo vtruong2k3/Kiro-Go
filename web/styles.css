@@ -4449,9 +4449,11 @@ img.brand-icon {
 .overview-key-panel {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  padding: 0.75rem 0.875rem;
+  padding: 0.875rem 1rem;
   background: color-mix(in oklab, var(--muted) 28%, var(--card));
   min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
 .overview-key-panel-title {
   margin: 0 0 0.625rem;
@@ -4461,6 +4463,17 @@ img.brand-icon {
   text-transform: uppercase;
   letter-spacing: 0.04em;
   line-height: 1.2;
+}
+.overview-status-chart-wrap {
+  position: relative;
+  height: 8.5rem;
+  width: 100%;
+  max-width: 14rem;
+  margin: 0 auto;
+}
+.overview-status-chart-wrap canvas {
+  width: 100% !important;
+  height: 100% !important;
 }
 .overview-status-bar {
   display: flex;
@@ -4515,6 +4528,15 @@ img.brand-icon {
 .overview-status-legend strong {
   color: var(--foreground);
   font-weight: 650;
+}
+.overview-created-chart-wrap {
+  position: relative;
+  height: 8.75rem;
+  width: 100%;
+}
+.overview-created-chart-wrap canvas {
+  width: 100% !important;
+  height: 100% !important;
 }
 .overview-created-chart {
   display: grid;
@@ -4661,6 +4683,17 @@ img.brand-icon {
   color: var(--foreground);
 }
 .api-keys-ip-badge.is-multi { color: var(--warning, #b45309); }
+.api-keys-rpm-badge {
+  display: inline-block;
+  min-width: 2.25rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted, #6b7280);
+}
+.api-keys-rpm-badge.is-active {
+  color: var(--primary, #2563eb);
+  font-weight: 600;
+}
+.api-key-ips-summary { color: var(--text-secondary, #374151); }
 .api-key-ips-table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }
 .api-key-ips-table th, .api-key-ips-table td {
   padding: 0.5rem 0.5rem;

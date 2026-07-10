@@ -377,6 +377,10 @@ export function applyTheme(pref) {
       btn.setAttribute('aria-label', themeLabel);
       btn.setAttribute('title', themeLabel);
     });
+    // Let overview charts recolor for light/dark tokens.
+    try {
+      window.dispatchEvent(new CustomEvent('kiro:themechange', { detail: { theme: resolved, pref } }));
+    } catch (_) {}
   }
 export function getThemePref() {
     const saved = localStorage.getItem('kiro_theme');

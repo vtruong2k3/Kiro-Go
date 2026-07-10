@@ -24,6 +24,7 @@ type apiKeyView struct {
 	ExpiresAt     int64   `json:"expiresAt,omitempty"`
 	Expired       bool    `json:"expired"`
 	UniqueIPs     int     `json:"uniqueIps,omitempty"`
+	RPM           int64   `json:"rpm,omitempty"`
 }
 
 func toApiKeyView(e config.ApiKeyEntry) apiKeyView {
@@ -48,13 +49,16 @@ func toApiKeyView(e config.ApiKeyEntry) apiKeyView {
 func (h *Handler) apiListApiKeys(w http.ResponseWriter, r *http.Request) {
 	entries := config.ListApiKeys()
 	counts := map[string]int{}
+	rpms := map[string]int64{}
 	if h != nil && h.ipTrack != nil {
 		counts = h.ipTrack.uniqueCounts()
+		rpms = h.ipTrack.rpmByKey()
 	}
 	out := make([]apiKeyView, len(entries))
 	for i, e := range entries {
 		v := toApiKeyView(e)
 		v.UniqueIPs = counts[e.ID]
+		v.RPM = rpms[e.ID]
 		out[i] = v
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"apiKeys": out})
@@ -187,6 +191,14 @@ func (h *Handler) apiDeleteApiKey(w http.ResponseWriter, r *http.Request, id str
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
+	}
+	if h != nil {
+		if h.ipTrack != nil {
+			h.ipTrack.removeKey(id)
+		}
+		if h.runtimeStore != nil {
+			_ = h.runtimeStore.DeleteKeyIPStats(id)
+		}
 	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }

@@ -380,6 +380,11 @@ export function renderApiKeys() {
           escapeHtml(formatNumber(item.uniqueIps || 0)) +
         '</button>' +
       '</td>' +
+      '<td class="num" title="' + escapeAttr(t('apiKeys.rpmHint')) + '">' +
+        '<span class="api-keys-rpm-badge' + ((item.rpm || 0) > 0 ? ' is-active' : '') + '">' +
+          escapeHtml(formatNumber(item.rpm || 0)) +
+        '</span>' +
+      '</td>' +
       '<td>' + escapeHtml(expiryText) + '</td>' +
       '<td class="api-keys-actions-cell">' +
         '<div class="api-keys-row-actions">' +
@@ -421,6 +426,7 @@ export function renderApiKeys() {
           '<th>' + escapeHtml(t('apiKeys.credits')) + '</th>' +
           '<th class="num">' + escapeHtml(t('apiKeys.requests')) + '</th>' +
           '<th class="num">' + escapeHtml(t('apiKeys.colIPs')) + '</th>' +
+          '<th class="num" title="' + escapeAttr(t('apiKeys.rpmHint')) + '">' + escapeHtml(t('apiKeys.colRpm')) + '</th>' +
           '<th>' + escapeHtml(t('apiKeys.expiry')) + '</th>' +
           '<th>' + escapeHtml(t('apiKeys.colActions')) + '</th>' +
         '</tr></thead>' +
@@ -860,33 +866,80 @@ function setText(id, value) {
   if (el) el.textContent = value;
 }
 
+// --- Overview charts (Chart.js) ---------------------------------------------
+// Admin UI is vanilla JS (no React), so we use Chart.js instead of Recharts.
+// Chart.js is loaded from /admin/vendor/chart.js/chart.umd.min.js as window.Chart.
+
+let overviewStatusChart = null;
+let overviewCreatedChart = null;
+
+function cssVar(name, fallback) {
+  try {
+    const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return v || fallback;
+  } catch (_) {
+    return fallback;
+  }
+}
+
+function overviewChartColors() {
+  return {
+    success: cssVar('--success', '#2dd4bf'),
+    destructive: cssVar('--destructive', '#ff5b5b'),
+    mutedFg: cssVar('--muted-foreground', '#a4a4a4'),
+    muted: cssVar('--muted', '#1d1d1d'),
+    foreground: cssVar('--foreground', '#ffffff'),
+    border: cssVar('--border', '#242424'),
+    card: cssVar('--card', '#090909'),
+    primary: cssVar('--primary', '#ffffff'),
+  };
+}
+
+function destroyOverviewCharts() {
+  if (overviewStatusChart) {
+    try { overviewStatusChart.destroy(); } catch (_) {}
+    overviewStatusChart = null;
+  }
+  if (overviewCreatedChart) {
+    try { overviewCreatedChart.destroy(); } catch (_) {}
+    overviewCreatedChart = null;
+  }
+}
+
+function hasChartJs() {
+  return typeof window !== 'undefined' && typeof window.Chart === 'function';
+}
+
 function renderOverviewStatusDist(agg) {
-  const bar = $('apiKeyStatusBar');
+  const canvas = $('apiKeyStatusChart');
   const legend = $('apiKeyStatusLegend');
-  if (!bar || !legend) return;
+  // Legacy DOM (pre-Chart.js) still supported for safety.
+  const bar = $('apiKeyStatusBar');
+  if (!legend) return;
 
   const total = Math.max(agg.total, 0);
   const aria = t('stats.apiKeysStatusAria', String(agg.active), String(agg.disabled), String(agg.expired));
-  bar.setAttribute('aria-label', aria);
+
+  const segs = [
+    { key: 'active', count: agg.active, sw: 'overview-status-swatch--active', label: t('apiKeys.statusEnabled'), colorKey: 'success' },
+    { key: 'disabled', count: agg.disabled, sw: 'overview-status-swatch--disabled', label: t('apiKeys.disabled'), colorKey: 'mutedFg' },
+    { key: 'expired', count: agg.expired, sw: 'overview-status-swatch--expired', label: t('apiKeys.expired'), colorKey: 'destructive' }
+  ];
 
   if (!total) {
-    bar.innerHTML = '';
+    if (overviewStatusChart) {
+      try { overviewStatusChart.destroy(); } catch (_) {}
+      overviewStatusChart = null;
+    }
+    if (canvas) {
+      canvas.setAttribute('aria-label', aria);
+      const ctx = canvas.getContext && canvas.getContext('2d');
+      if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+    if (bar) bar.innerHTML = '';
     legend.innerHTML = '<li class="muted-text">' + escapeHtml(t('stats.apiKeysNoKeys')) + '</li>';
     return;
   }
-
-  const segs = [
-    { key: 'active', count: agg.active, cls: 'overview-status-seg--active', sw: 'overview-status-swatch--active', label: t('apiKeys.statusEnabled') },
-    { key: 'disabled', count: agg.disabled, cls: 'overview-status-seg--disabled', sw: 'overview-status-swatch--disabled', label: t('apiKeys.disabled') },
-    { key: 'expired', count: agg.expired, cls: 'overview-status-seg--expired', sw: 'overview-status-swatch--expired', label: t('apiKeys.expired') }
-  ];
-
-  bar.innerHTML = segs.map(s => {
-    if (!s.count) return '';
-    const pct = (100 * s.count / total).toFixed(2);
-    return '<span class="overview-status-seg ' + s.cls + '" style="width:' + pct + '%" title="' +
-      escapeAttr(s.label + ': ' + s.count) + '"></span>';
-  }).join('');
 
   legend.innerHTML = segs.map(s => {
     const pct = total ? Math.round(100 * s.count / total) : 0;
@@ -894,26 +947,202 @@ function renderOverviewStatusDist(agg) {
       escapeHtml(s.label) + ' <strong>' + escapeHtml(String(s.count)) + '</strong>' +
       ' <span class="muted-text">(' + pct + '%)</span></li>';
   }).join('');
+
+  const colors = overviewChartColors();
+  // Doughnut only needs non-zero slices; legend still shows full breakdown.
+  const plot = segs.filter(s => s.count > 0);
+  const labels = plot.map(s => s.label);
+  const data = plot.map(s => s.count);
+  const bg = plot.map(s => {
+    if (s.colorKey === 'success') return colors.success;
+    if (s.colorKey === 'destructive') return colors.destructive;
+    return colors.mutedFg;
+  });
+
+  if (hasChartJs() && canvas) {
+    canvas.setAttribute('aria-label', aria);
+    if (overviewStatusChart) {
+      overviewStatusChart.data.labels = labels;
+      overviewStatusChart.data.datasets[0].data = data;
+      overviewStatusChart.data.datasets[0].backgroundColor = bg;
+      overviewStatusChart.data.datasets[0].borderColor = colors.card;
+      overviewStatusChart.options.plugins.tooltip.callbacks = {
+        label(ctx) {
+          const v = ctx.raw || 0;
+          const pct = total ? Math.round(100 * v / total) : 0;
+          return ' ' + ctx.label + ': ' + v + ' (' + pct + '%)';
+        }
+      };
+      overviewStatusChart.update('active');
+    } else {
+      overviewStatusChart = new window.Chart(canvas, {
+        type: 'doughnut',
+        data: {
+          labels,
+          datasets: [{
+            data,
+            backgroundColor: bg,
+            borderColor: colors.card,
+            borderWidth: 2,
+            hoverOffset: 6,
+            borderRadius: 4,
+            spacing: 2,
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          cutout: '72%',
+          animation: { duration: 450, easing: 'easeOutQuart' },
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              backgroundColor: colors.card,
+              titleColor: colors.foreground,
+              bodyColor: colors.mutedFg,
+              borderColor: colors.border,
+              borderWidth: 1,
+              padding: 10,
+              displayColors: true,
+              callbacks: {
+                label(ctx) {
+                  const v = ctx.raw || 0;
+                  const pct = total ? Math.round(100 * v / total) : 0;
+                  return ' ' + ctx.label + ': ' + v + ' (' + pct + '%)';
+                }
+              }
+            }
+          }
+        }
+      });
+    }
+    return;
+  }
+
+  // Fallback: CSS segmented bar (no Chart.js)
+  if (bar) {
+    bar.setAttribute('aria-label', aria);
+    bar.innerHTML = segs.map(s => {
+      if (!s.count) return '';
+      const pct = (100 * s.count / total).toFixed(2);
+      const cls = s.key === 'active' ? 'overview-status-seg--active'
+        : s.key === 'disabled' ? 'overview-status-seg--disabled'
+        : 'overview-status-seg--expired';
+      return '<span class="overview-status-seg ' + cls + '" style="width:' + pct + '%" title="' +
+        escapeAttr(s.label + ': ' + s.count) + '"></span>';
+    }).join('');
+  }
 }
 
 function renderOverviewCreatedChart(agg) {
-  const chart = $('apiKeyCreatedChart');
+  const canvas = $('apiKeyCreatedChart');
   const summary = $('apiKeyCreatedSummary');
-  if (!chart) return;
+  if (!canvas && !summary) return;
 
-  chart.setAttribute('aria-label', t('stats.apiKeysCreatedAria'));
   const buckets = agg.createdBuckets || [];
-  const maxH = Math.max(1, ...buckets);
   const periodTotal = buckets.reduce((a, b) => a + b, 0);
   const dayMs = 86400000;
   const start = agg.windowStart || (Date.now() - 13 * dayMs);
+  const labels = [];
+  for (let i = 0; i < 14; i++) {
+    const d = new Date(start + i * dayMs);
+    labels.push(String(d.getMonth() + 1).padStart(2, '0') + '/' + String(d.getDate()).padStart(2, '0'));
+  }
+  if (summary) summary.textContent = t('stats.apiKeysCreatedCount', String(periodTotal));
 
+  const aria = t('stats.apiKeysCreatedAria');
+  const colors = overviewChartColors();
+
+  if (hasChartJs() && canvas && canvas.tagName === 'CANVAS') {
+    canvas.setAttribute('aria-label', aria);
+    const data = buckets.map(v => v || 0);
+    if (overviewCreatedChart) {
+      overviewCreatedChart.data.labels = labels;
+      overviewCreatedChart.data.datasets[0].data = data;
+      overviewCreatedChart.data.datasets[0].backgroundColor = colors.success;
+      overviewCreatedChart.data.datasets[0].hoverBackgroundColor = colors.foreground;
+      overviewCreatedChart.options.scales.x.ticks.color = colors.mutedFg;
+      overviewCreatedChart.options.scales.y.ticks.color = colors.mutedFg;
+      overviewCreatedChart.options.scales.y.grid.color = colors.border;
+      overviewCreatedChart.update('active');
+    } else {
+      overviewCreatedChart = new window.Chart(canvas, {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [{
+            data,
+            backgroundColor: colors.success,
+            hoverBackgroundColor: colors.foreground,
+            borderRadius: 4,
+            borderSkipped: false,
+            maxBarThickness: 14,
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: { duration: 450, easing: 'easeOutQuart' },
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              backgroundColor: colors.card,
+              titleColor: colors.foreground,
+              bodyColor: colors.mutedFg,
+              borderColor: colors.border,
+              borderWidth: 1,
+              padding: 10,
+              displayColors: false,
+              callbacks: {
+                title(items) { return items[0] ? items[0].label : ''; },
+                label(ctx) { return ' ' + (ctx.raw || 0); }
+              }
+            }
+          },
+          scales: {
+            x: {
+              grid: { display: false },
+              border: { display: false },
+              ticks: {
+                color: colors.mutedFg,
+                font: { size: 10 },
+                maxRotation: 0,
+                autoSkip: true,
+                maxTicksLimit: 5,
+              }
+            },
+            y: {
+              beginAtZero: true,
+              border: { display: false },
+              grid: {
+                color: colors.border,
+                drawTicks: false,
+              },
+              ticks: {
+                color: colors.mutedFg,
+                font: { size: 10 },
+                precision: 0,
+                maxTicksLimit: 4,
+              }
+            }
+          }
+        }
+      });
+    }
+    return;
+  }
+
+  // Fallback: pure CSS bars if canvas/Chart.js unavailable
+  const chart = canvas || $('apiKeyCreatedChart');
+  if (!chart || chart.tagName === 'CANVAS') return;
+  chart.setAttribute('aria-label', aria);
+  const maxH = Math.max(1, ...buckets);
   let html = '';
   for (let i = 0; i < 14; i++) {
     const count = buckets[i] || 0;
     const h = Math.max(2, Math.round(100 * count / maxH));
-    const d = new Date(start + i * dayMs);
-    const label = String(d.getMonth() + 1).padStart(2, '0') + '/' + String(d.getDate()).padStart(2, '0');
+    const label = labels[i];
     const showLabel = i === 0 || i === 6 || i === 13;
     html += '<div class="overview-created-col" title="' + escapeAttr(label + ': ' + count) + '">' +
       '<div class="overview-created-bar' + (count ? '' : ' is-zero') + '" style="height:' + (count ? h : 2) + '%"></div>' +
@@ -921,7 +1150,6 @@ function renderOverviewCreatedChart(agg) {
       '</div>';
   }
   chart.innerHTML = html;
-  if (summary) summary.textContent = t('stats.apiKeysCreatedCount', String(periodTotal));
 }
 
 function renderOverviewTopTable(agg) {
@@ -985,7 +1213,9 @@ export function renderOverviewApiKeyStats(force) {
 
   const agg = aggregateApiKeyStats(state.apiKeysCache || []);
   const langTag = state.currentLang || '';
-  const fp = langTag + '|' + agg.fingerprint;
+  const themeTag = document.documentElement.classList.contains('dark') ? 'dark' : 'light';
+  const chartTag = hasChartJs() ? 'chartjs' : 'css';
+  const fp = langTag + '|' + themeTag + '|' + chartTag + '|' + agg.fingerprint;
   if (!force && state.overviewApiKeyStatsFp === fp) {
     // Still refresh KPI text cheaply in case format locale-independent numbers only —
     // skip chart/table rebuild.
@@ -1010,6 +1240,15 @@ export function renderOverviewApiKeyStats(force) {
   renderOverviewCreatedChart(agg);
   renderOverviewTopTable(agg);
 }
+
+// Recolor Chart.js canvases when theme tokens change.
+if (typeof window !== 'undefined' && !window.__kiroOverviewThemeBound) {
+  window.__kiroOverviewThemeBound = true;
+  window.addEventListener('kiro:themechange', () => {
+    try { renderOverviewApiKeyStats(true); } catch (_) {}
+  });
+}
+
 
 
 // --- Access security (blocked IPs + trust proxy) ---
@@ -1128,6 +1367,7 @@ export async function openApiKeyIPsModal(id, name) {
       body.innerHTML = '<div class="empty-state">' + escapeHtml(t('apiKeys.ipsEmpty')) + '</div>';
       return;
     }
+    const keyRpm = d.rpm || 0;
     const rows = ips.map(item => {
       const ip = item.ip || '';
       const last = item.lastSeen ? new Date(item.lastSeen * 1000).toLocaleString() : '-';
@@ -1135,6 +1375,7 @@ export async function openApiKeyIPsModal(id, name) {
       return '<tr>' +
         '<td class="api-key-ips-ip">' + escapeHtml(ip) + '</td>' +
         '<td class="num">' + escapeHtml(formatNumber(item.requests || 0)) + '</td>' +
+        '<td class="num" title="' + escapeAttr(t('apiKeys.rpmHint')) + '">' + escapeHtml(formatNumber(item.rpm || 0)) + '</td>' +
         '<td>' + escapeHtml(first) + '</td>' +
         '<td>' + escapeHtml(last) + '</td>' +
         '<td><button type="button" class="btn btn-danger btn-sm" data-ban-ip="' + escapeAttr(ip) + '">' +
@@ -1142,10 +1383,15 @@ export async function openApiKeyIPsModal(id, name) {
       '</tr>';
     }).join('');
     body.innerHTML =
+      '<div class="api-key-ips-summary text-sm mb-2">' +
+        escapeHtml(t('apiKeys.rpm')) + ': <strong>' + escapeHtml(formatNumber(keyRpm)) + '</strong>' +
+        ' <span class="text-muted">(' + escapeHtml(t('apiKeys.rpmHint')) + ')</span>' +
+      '</div>' +
       '<div class="usage-table-wrap"><table class="api-key-ips-table">' +
         '<thead><tr>' +
           '<th>IP</th>' +
           '<th class="num">' + escapeHtml(t('apiKeys.ipsRequests')) + '</th>' +
+          '<th class="num" title="' + escapeAttr(t('apiKeys.rpmHint')) + '">' + escapeHtml(t('apiKeys.colRpm')) + '</th>' +
           '<th>' + escapeHtml(t('apiKeys.ipsFirstSeen')) + '</th>' +
           '<th>' + escapeHtml(t('apiKeys.ipsLastSeen')) + '</th>' +
           '<th></th>' +
