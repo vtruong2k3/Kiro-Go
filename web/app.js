@@ -183,7 +183,15 @@ import {
     } catch (e) { }
   }
   async function login() {
-    state.password = $('pwdField').value;
+    const field = $('pwdField');
+    const password = field ? field.value : '';
+    if (!password) {
+      toast(t('login.passwordRequired') || t('login.error'), 'error');
+      if (field) field.focus();
+      return;
+    }
+    state.password = password;
+    setLoginLoading(true);
     try {
       const res = await api('/status');
       if (res.ok) {
@@ -192,10 +200,57 @@ import {
         showMain(); loadData();
       } else {
         toast(t('login.error'), 'error');
+        shakeLoginCard();
+        state.password = '';
       }
     } catch (e) {
       toast(t('login.connectError'), 'error');
+      shakeLoginCard();
+      state.password = '';
+    } finally {
+      setLoginLoading(false);
     }
+  }
+  function setLoginLoading(loading) {
+    const card = $('loginCard');
+    const btn = $('loginBtn');
+    const field = $('pwdField');
+    const remember = $('rememberPwd');
+    const toggle = $('pwdToggle');
+    if (card) card.classList.toggle('is-loading', loading);
+    if (btn) {
+      btn.disabled = loading;
+      if (loading) btn.setAttribute('aria-busy', 'true');
+      else btn.removeAttribute('aria-busy');
+      const icon = btn.querySelector('[data-login-icon]');
+      const label = btn.querySelector('[data-login-label]');
+      if (icon) {
+        icon.className = loading
+          ? 'fa-solid fa-spinner fa-spin'
+          : 'fa-solid fa-arrow-right-to-bracket';
+      }
+      if (label) {
+        if (loading) {
+          label.removeAttribute('data-i18n');
+          label.textContent = t('login.submitting');
+        } else {
+          label.setAttribute('data-i18n', 'login.submit');
+          label.textContent = t('login.submit');
+        }
+      }
+    }
+    if (field) field.disabled = loading;
+    if (remember) remember.disabled = loading;
+    if (toggle) toggle.disabled = loading;
+  }
+  function shakeLoginCard() {
+    const card = $('loginCard');
+    if (!card) return;
+    card.classList.remove('is-error');
+    // Force reflow so repeated failures re-trigger the animation.
+    void card.offsetWidth;
+    card.classList.add('is-error');
+    window.setTimeout(() => card.classList.remove('is-error'), 450);
   }
   function initRememberMe() {
     const remember = $('rememberPwd');
@@ -657,20 +712,29 @@ import {
 
   // Event wiring
   function bindLoginEvents() {
-    $('loginBtn').addEventListener('click', login);
-    $('pwdField').addEventListener('keypress', e => { if (e.key === 'Enter') login(); });
+    const form = $('loginForm');
+    if (form) {
+      form.addEventListener('submit', e => {
+        e.preventDefault();
+        login();
+      });
+    } else {
+      $('loginBtn').addEventListener('click', login);
+      $('pwdField').addEventListener('keypress', e => { if (e.key === 'Enter') login(); });
+    }
 
     const pwdToggle = $('pwdToggle');
     if (pwdToggle) {
       pwdToggle.addEventListener('click', () => {
         const f = $('pwdField');
+        if (!f || f.disabled) return;
         const willShow = f.type === 'password';
         f.type = willShow ? 'text' : 'password';
         pwdToggle.dataset.shown = String(willShow);
         pwdToggle.setAttribute('aria-label', willShow ? t('login.hidePassword') : t('login.showPassword'));
         pwdToggle.innerHTML = willShow
-          ? '<i class="fa-solid fa-eye-slash"></i>'
-          : '<i class="fa-solid fa-eye"></i>';
+          ? '<i class="fa-solid fa-eye-slash" aria-hidden="true"></i>'
+          : '<i class="fa-solid fa-eye" aria-hidden="true"></i>';
       });
     }
   }

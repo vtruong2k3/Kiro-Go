@@ -24,20 +24,7 @@
 <body>
   <!-- Login -->
   <div id="loginPage" class="login-wrapper">
-    <div class="ghost-bg" aria-hidden="true">
-      <i class="fa-solid fa-ghost ghost ghost-1"></i>
-      <i class="fa-solid fa-ghost ghost ghost-2"></i>
-      <i class="fa-solid fa-ghost ghost ghost-3"></i>
-      <i class="fa-solid fa-ghost ghost ghost-4"></i>
-      <i class="fa-solid fa-ghost ghost ghost-5"></i>
-      <i class="fa-solid fa-ghost ghost ghost-6"></i>
-      <i class="fa-solid fa-ghost ghost ghost-7"></i>
-      <i class="fa-solid fa-ghost ghost ghost-8"></i>
-      <i class="fa-solid fa-ghost ghost ghost-9"></i>
-      <i class="fa-solid fa-ghost ghost ghost-10"></i>
-      <i class="fa-solid fa-ghost ghost ghost-11"></i>
-      <i class="fa-solid fa-ghost ghost ghost-12"></i>
-    </div>
+    <div class="login-ambient" aria-hidden="true"></div>
     <header class="login-topbar">
       <div class="login-topbar-inner">
         <div class="brand" aria-label="Kiro-Go" data-i18n-aria-label="app.title">
@@ -61,30 +48,40 @@
       </div>
     </header>
     <main class="login-main">
-      <div class="login-box">
+      <div class="login-card" id="loginCard">
+        <div class="login-brand-mark" aria-hidden="true">
+          <img class="login-brand-icon" src="/admin/favicon.ico" alt="" />
+        </div>
         <h1 class="login-title" data-i18n="login.title"></h1>
         <p class="login-subtitle" data-i18n="login.subtitle"></p>
-        <div class="form-group">
-          <label data-i18n="login.password"></label>
-          <div class="input-affix">
-            <i class="fa-solid fa-lock affix-icon"></i>
-            <input type="password" id="pwdField" data-i18n-placeholder="login.passwordPlaceholder" autocomplete="off" />
-            <button type="button" class="affix-btn" id="pwdToggle" aria-label=""
-              data-i18n-aria-label="login.showPassword" data-shown="false">
-              <i class="fa-solid fa-eye"></i>
-            </button>
+        <form id="loginForm" class="login-form" autocomplete="on" novalidate>
+          <div class="form-group">
+            <label for="pwdField" data-i18n="login.password"></label>
+            <div class="input-affix">
+              <i class="fa-solid fa-lock affix-icon" aria-hidden="true"></i>
+              <input type="password" id="pwdField" name="password"
+                data-i18n-placeholder="login.passwordPlaceholder"
+                autocomplete="current-password" required />
+              <button type="button" class="affix-btn" id="pwdToggle" aria-label=""
+                data-i18n-aria-label="login.showPassword" data-shown="false">
+                <i class="fa-solid fa-eye" aria-hidden="true"></i>
+              </button>
+            </div>
           </div>
+          <label class="remember-row" for="rememberPwd">
+            <input type="checkbox" id="rememberPwd" />
+            <span class="remember-box" aria-hidden="true"><i class="fa-solid fa-check"></i></span>
+            <span class="remember-label" data-i18n="login.remember"></span>
+          </label>
+          <button type="submit" class="btn btn-primary btn-lg w-full" id="loginBtn">
+            <i class="fa-solid fa-arrow-right-to-bracket" data-login-icon aria-hidden="true"></i>
+            <span data-i18n="login.submit" data-login-label></span>
+          </button>
+        </form>
+        <div class="login-card-footer">
+          <i class="fa-solid fa-shield-halved" aria-hidden="true"></i>
+          <span data-i18n="login.secureNote"></span>
         </div>
-        <label class="remember-row" for="rememberPwd">
-          <input type="checkbox" id="rememberPwd" />
-          <span class="remember-box" aria-hidden="true"><i class="fa-solid fa-check"></i></span>
-          <span class="remember-label" data-i18n="login.remember"></span>
-        </label>
-        <button type="button" class="btn btn-primary btn-lg w-full" id="loginBtn">
-          <i class="fa-solid fa-arrow-right-to-bracket"></i>
-          <span data-i18n="login.submit"></span>
-        </button>
-
       </div>
     </main>
   </div>
@@ -576,42 +573,6 @@
       </div>
     </div>
 
-    <!-- Footer -->
-    <footer class="app-footer" aria-label="" data-i18n-aria-label="aria.footer">
-      <div class="app-footer-inner">
-        <div class="footer-panel">
-          <div class="footer-identity">
-            <img class="footer-icon" src="/admin/favicon.ico" alt="" />
-            <div class="footer-copy">
-              <div class="footer-title-row">
-                <span class="footer-title">Kiro-Go</span>
-                <span class="footer-version" id="versionBadge" aria-label=""
-                  data-i18n-aria-label="aria.currentVersion"></span>
-                <span class="footer-version-status" id="statusBadge" data-i18n-title="status.running" title="">
-                  <span class="status-dot"></span>
-                </span>
-              </div>
-
-            </div>
-          </div>
-          <div class="footer-actions">
-            <nav class="footer-links" aria-label="" data-i18n-aria-label="aria.resources">
-              <button class="footer-link" id="checkUpdateBtn" type="button">
-                <i class="fa-solid fa-rotate" aria-hidden="true"></i>
-                <span data-i18n="update.check" data-update-label></span>
-              </button>
-              <a class="footer-link" href="https://github.com/Quorinex/Kiro-Go" target="_blank" rel="noopener">
-                <i class="fa-brands fa-github" aria-hidden="true"></i>
-                <span data-i18n="footer.github"></span>
-              </a>
-            </nav>
-          </div>
-        </div>
-        <div class="footer-meta">
-          <span>© <span id="footerYear"></span> Kiro-Go</span>
-        </div>
-      </div>
-    </footer>
     </div>
   </div>
 
