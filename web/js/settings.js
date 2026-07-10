@@ -1368,33 +1368,45 @@ export async function openApiKeyIPsModal(id, name) {
       return;
     }
     const keyRpm = d.rpm || 0;
+    const fmtTs = (sec) => {
+      if (!sec) return '-';
+      try {
+        return new Date(sec * 1000).toLocaleString(undefined, {
+          year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit', second: '2-digit'
+        });
+      } catch (_) {
+        return new Date(sec * 1000).toLocaleString();
+      }
+    };
     const rows = ips.map(item => {
       const ip = item.ip || '';
-      const last = item.lastSeen ? new Date(item.lastSeen * 1000).toLocaleString() : '-';
-      const first = item.firstSeen ? new Date(item.firstSeen * 1000).toLocaleString() : '-';
+      const last = fmtTs(item.lastSeen);
+      const first = fmtTs(item.firstSeen);
       return '<tr>' +
         '<td class="api-key-ips-ip">' + escapeHtml(ip) + '</td>' +
         '<td class="num">' + escapeHtml(formatNumber(item.requests || 0)) + '</td>' +
         '<td class="num" title="' + escapeAttr(t('apiKeys.rpmHint')) + '">' + escapeHtml(formatNumber(item.rpm || 0)) + '</td>' +
-        '<td>' + escapeHtml(first) + '</td>' +
-        '<td>' + escapeHtml(last) + '</td>' +
-        '<td><button type="button" class="btn btn-danger btn-sm" data-ban-ip="' + escapeAttr(ip) + '">' +
+        '<td class="api-key-ips-time">' + escapeHtml(first) + '</td>' +
+        '<td class="api-key-ips-time">' + escapeHtml(last) + '</td>' +
+        '<td class="api-key-ips-actions"><button type="button" class="btn btn-danger btn-sm" data-ban-ip="' + escapeAttr(ip) + '">' +
           escapeHtml(t('apiKeys.banIP')) + '</button></td>' +
       '</tr>';
     }).join('');
     body.innerHTML =
-      '<div class="api-key-ips-summary text-sm mb-2">' +
-        escapeHtml(t('apiKeys.rpm')) + ': <strong>' + escapeHtml(formatNumber(keyRpm)) + '</strong>' +
-        ' <span class="text-muted">(' + escapeHtml(t('apiKeys.rpmHint')) + ')</span>' +
+      '<div class="api-key-ips-summary">' +
+        '<span>' + escapeHtml(t('apiKeys.rpm')) + ': <strong>' + escapeHtml(formatNumber(keyRpm)) + '</strong></span>' +
+        '<span class="api-key-ips-summary-hint">' + escapeHtml(t('apiKeys.rpmHint')) + '</span>' +
+        '<span class="api-key-ips-summary-hint">· ' + escapeHtml(t('apiKeys.multiIP', String(ips.length))) + '</span>' +
       '</div>' +
-      '<div class="usage-table-wrap"><table class="api-key-ips-table">' +
+      '<div class="api-key-ips-table-wrap"><table class="api-key-ips-table">' +
         '<thead><tr>' +
           '<th>IP</th>' +
           '<th class="num">' + escapeHtml(t('apiKeys.ipsRequests')) + '</th>' +
           '<th class="num" title="' + escapeAttr(t('apiKeys.rpmHint')) + '">' + escapeHtml(t('apiKeys.colRpm')) + '</th>' +
           '<th>' + escapeHtml(t('apiKeys.ipsFirstSeen')) + '</th>' +
           '<th>' + escapeHtml(t('apiKeys.ipsLastSeen')) + '</th>' +
-          '<th></th>' +
+          '<th class="api-key-ips-actions"></th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table></div>';
   } catch (e) {
     if (body) body.innerHTML = '<div class="empty-state">' + escapeHtml((e && e.message) || t('common.failed')) + '</div>';
