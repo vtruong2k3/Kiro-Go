@@ -202,7 +202,12 @@ type Config struct {
 	ApiKey        string        `json:"apiKey,omitempty"`  // [Deprecated] Legacy single API key, migrated into ApiKeys on first load
 	RequireApiKey bool          `json:"requireApiKey"`     // [Deprecated] Whether to enforce API key validation; with multi-key support, len(ApiKeys)>0 implicitly enforces auth
 	ApiKeys       []ApiKeyEntry `json:"apiKeys,omitempty"` // Multiple API keys, each with independent quota
-	KiroVersion   string        `json:"kiroVersion,omitempty"`
+	// TrustProxyHeaders enables reading X-Forwarded-For / X-Real-IP for client IP.
+	// Keep false when the service is exposed directly (clients can spoof headers).
+	TrustProxyHeaders bool `json:"trustProxyHeaders,omitempty"`
+	// BlockedIPs is a global deny-list of client IPs (exact match) for /v1/* requests.
+	BlockedIPs  []string `json:"blockedIPs,omitempty"`
+	KiroVersion string   `json:"kiroVersion,omitempty"`
 	SystemVersion string        `json:"systemVersion,omitempty"`
 	NodeVersion   string        `json:"nodeVersion,omitempty"`
 	Accounts      []Account     `json:"accounts"` // Registered Kiro accounts
@@ -403,6 +408,7 @@ func Load() error {
 			return err
 		}
 	}
+	rebuildBlockedIPSetLocked()
 	return nil
 }
 

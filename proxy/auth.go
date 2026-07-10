@@ -10,6 +10,7 @@ import (
 // apiKeyContextKey is an unexported type used as the context key for the matched ApiKeyEntry
 // so it cannot collide with keys defined in other packages.
 type apiKeyContextKey struct{}
+type clientIPContextKey struct{}
 
 // authError describes why authentication failed. status is the HTTP status code to send.
 type authError struct {
@@ -110,6 +111,25 @@ func apiKeyIDFromContext(ctx context.Context) string {
 		return ""
 	}
 	if v, ok := ctx.Value(apiKeyContextKey{}).(string); ok {
+		return v
+	}
+	return ""
+}
+
+// withClientIPContext stores the resolved client IP on the request context.
+func withClientIPContext(r *http.Request, ip string) *http.Request {
+	if r == nil || ip == "" {
+		return r
+	}
+	return r.WithContext(context.WithValue(r.Context(), clientIPContextKey{}, ip))
+}
+
+// clientIPFromContext returns the client IP stored in ctx, or empty string.
+func clientIPFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	if v, ok := ctx.Value(clientIPContextKey{}).(string); ok {
 		return v
 	}
 	return ""

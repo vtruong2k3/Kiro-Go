@@ -28,7 +28,7 @@ export async function loadSettings() {
   const d = await res.json();
   $('requireApiKey').checked = d.requireApiKey;
   $('allowOverUsage').checked = d.allowOverUsage || false;
-  await Promise.all([loadThinkingConfig(), loadEndpointConfig(), loadProxyConfig(), loadPromptFilter(), loadApiKeys()]);
+  await Promise.all([loadThinkingConfig(), loadEndpointConfig(), loadProxyConfig(), loadPromptFilter(), loadApiKeys(), loadSecuritySettings()]);
   refreshCustomSelects();
 }
 export async function loadThinkingConfig() {
@@ -168,18 +168,23 @@ export async function resetStats() {
 }
 // Multi API Key management
 
-export async function loadApiKeys() {
+export async function loadApiKeys(opts = {}) {
+  const render = opts.render !== false;
   const list = $('apiKeysList');
-  if (!list) return;
   try {
     const res = await api('/api-keys');
     if (!res.ok) throw new Error('http ' + res.status);
     const d = await res.json();
     state.apiKeysCache = Array.isArray(d.apiKeys) ? d.apiKeys : [];
-    renderApiKeys();
+    clampApiKeysPage();
+    if (render) renderApiKeys();
+    renderOverviewApiKeyStats();
   } catch (e) {
     state.apiKeysCache = [];
-    list.innerHTML = '<div class="muted-text" style="padding:0.5rem 0;">' + escapeHtml(t('apiKeys.loadFailed')) + '</div>';
+    if (list && render) {
+      list.innerHTML = '<div class="empty-state">' + escapeHtml(t('apiKeys.loadFailed')) + '</div>';
+    }
+    renderOverviewApiKeyStats();
   }
 }
 
@@ -193,70 +198,191 @@ export function usageBar(used, limit) {
   if (!limit || limit <= 0) return '';
   const ratio = Math.max(0, Math.min(1, used / limit));
   const pct = (ratio * 100).toFixed(1);
-  let color = '#3b82f6';
-  if (ratio >= 0.95) color = '#ef4444';
-  else if (ratio >= 0.8) color = '#f59e0b';
-  return '<div style="height:6px;background:rgba(127,127,127,0.2);border-radius:3px;overflow:hidden;margin-top:4px;">' +
-    '<div style="height:100%;width:' + pct + '%;background:' + color + ';transition:width 0.3s;"></div>' +
+  let fillClass = 'usage-fill';
+  if (ratio >= 0.95) fillClass += ' critical';
+  else if (ratio >= 0.8) fillClass += ' high';
+  return '<div class="usage-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + Math.round(ratio * 100) + '">' +
+    '<div class="' + fillClass + '" style="width:' + pct + '%;"></div>' +
     '</div>';
 }
 
 export function usageLine(label, used, limit, options) {
   options = options || {};
   const fmt = options.fmt || formatNumber;
-  if (!limit || limit <= 0) {
-    return '<div class="text-xs muted-text">' + escapeHtml(label) + ': ' + escapeHtml(fmt(used)) + ' / ' + escapeHtml(t('apiKeys.unlimited')) + '</div>';
+  const usedText = fmt(used);
+  const limitText = (!limit || limit <= 0) ? t('apiKeys.unlimited') : fmt(limit);
+  return '<div class="api-key-usage-item">' +
+    '<div class="api-key-usage-label"><span>' + escapeHtml(label) + '</span><strong>' +
+    escapeHtml(usedText) + ' / ' + escapeHtml(limitText) +
+    '</strong></div>' +
+    usageBar(used, limit) +
+    '</div>';
+}
+
+function usageCell(used, limit) {
+  const usedText = formatNumber(used || 0);
+  const limitText = (!limit || limit <= 0) ? t('apiKeys.unlimited') : formatNumber(limit);
+  return '<div class="api-keys-usage-cell">' +
+    '<div class="api-keys-usage-text">' + escapeHtml(usedText) + ' / ' + escapeHtml(limitText) + '</div>' +
+    usageBar(used || 0, limit || 0) +
+    '</div>';
+}
+
+export function getFilteredApiKeys() {
+  const kw = (state.apiKeysFilterKeyword || '').trim().toLowerCase();
+  const status = state.apiKeysFilterStatus || 'all';
+  return (state.apiKeysCache || []).filter(item => {
+    if (!item) return false;
+    if (status === 'enabled' && (!item.enabled || item.expired)) return false;
+    if (status === 'disabled' && item.enabled) return false;
+    if (status === 'expired' && !item.expired) return false;
+    if (kw) {
+      const name = (item.name || '').toLowerCase();
+      const masked = (item.keyMasked || '').toLowerCase();
+      const id = (item.id || '').toLowerCase();
+      let plain = '';
+      if (state.apiKeyRevealCache && state.apiKeyRevealCache[item.id]) {
+        plain = String(state.apiKeyRevealCache[item.id]).toLowerCase();
+      }
+      if (!(name.includes(kw) || masked.includes(kw) || id.includes(kw) || plain.includes(kw))) {
+        return false;
+      }
+    }
+    return true;
+  });
+}
+
+export function clampApiKeysPage() {
+  const size = Math.max(1, parseInt(state.apiKeysPageSize, 10) || 20);
+  state.apiKeysPageSize = size;
+  const total = getFilteredApiKeys().length;
+  const pages = Math.max(1, Math.ceil(total / size) || 1);
+  let page = parseInt(state.apiKeysPage, 10) || 1;
+  if (page < 1) page = 1;
+  if (page > pages) page = pages;
+  state.apiKeysPage = page;
+}
+
+export function getApiKeysPageSlice() {
+  clampApiKeysPage();
+  const filtered = getFilteredApiKeys();
+  const size = state.apiKeysPageSize;
+  const page = state.apiKeysPage;
+  const start = (page - 1) * size;
+  return {
+    filtered,
+    total: filtered.length,
+    page,
+    size,
+    pages: Math.max(1, Math.ceil(filtered.length / size) || 1),
+    start,
+    items: filtered.slice(start, start + size)
+  };
+}
+
+export function onApiKeysFilterChange() {
+  const search = $('apiKeysSearch');
+  const status = $('apiKeysStatusFilter');
+  const pageSize = $('apiKeysPageSize');
+  if (search) state.apiKeysFilterKeyword = search.value || '';
+  if (status) state.apiKeysFilterStatus = status.value || 'all';
+  if (pageSize) {
+    const n = parseInt(pageSize.value, 10);
+    state.apiKeysPageSize = (!isNaN(n) && n > 0) ? n : 20;
   }
-  return '<div class="text-xs muted-text">' + escapeHtml(label) + ': ' + escapeHtml(fmt(used)) + ' / ' + escapeHtml(fmt(limit)) + '</div>' + usageBar(used, limit);
+  state.apiKeysPage = 1;
+  renderApiKeys();
+}
+
+export function setApiKeysPage(page) {
+  state.apiKeysPage = page;
+  clampApiKeysPage();
+  renderApiKeys();
+}
+
+function syncApiKeysToolbarFromState() {
+  const search = $('apiKeysSearch');
+  const status = $('apiKeysStatusFilter');
+  const pageSize = $('apiKeysPageSize');
+  if (search && search.value !== (state.apiKeysFilterKeyword || '')) {
+    search.value = state.apiKeysFilterKeyword || '';
+  }
+  if (status && status.value !== (state.apiKeysFilterStatus || 'all')) {
+    status.value = state.apiKeysFilterStatus || 'all';
+  }
+  if (pageSize) {
+    const val = String(state.apiKeysPageSize || 20);
+    if (pageSize.value !== val) pageSize.value = val;
+  }
 }
 
 export function renderApiKeys() {
   const list = $('apiKeysList');
   if (!list) return;
+  syncApiKeysToolbarFromState();
+
   if (!state.apiKeysCache.length) {
-    list.innerHTML = '<div class="muted-text" style="padding:0.5rem 0;">' + escapeHtml(t('apiKeys.empty')) + '</div>';
+    list.innerHTML = '<div class="empty-state">' + escapeHtml(t('apiKeys.empty')) + '</div>';
     return;
   }
-  const html = state.apiKeysCache.map(item => {
+
+  const slice = getApiKeysPageSlice();
+  if (!slice.total) {
+    list.innerHTML = '<div class="empty-state">' + escapeHtml(t('apiKeys.noMatches')) + '</div>';
+    return;
+  }
+
+  const rows = slice.items.map(item => {
     const id = escapeAttr(item.id || '');
-    const name = item.name ? escapeHtml(item.name) : '<span class="muted-text">' + escapeHtml(t('apiKeys.unnamed')) + '</span>';
     const rawId = item.id || '';
+    const name = item.name
+      ? escapeHtml(item.name)
+      : '<span class="muted-text">' + escapeHtml(t('apiKeys.unnamed')) + '</span>';
     const revealed = !!(state.apiKeyRevealed && state.apiKeyRevealed[rawId]);
     const plain = (state.apiKeyRevealCache && state.apiKeyRevealCache[rawId]) || '';
     const displayKey = revealed && plain ? plain : (item.keyMasked || '');
     const keyText = escapeHtml(displayKey);
-    const eyeIcon = revealed ? 'fa-eye-slash' : 'fa-eye';
+    const eyeIcon = revealed ? 'fa-solid fa-eye-slash' : 'fa-solid fa-eye';
     const eyeLabel = revealed ? t('apiKeys.hideKey') : t('apiKeys.showKey');
-    const migrated = item.migrated
-      ? '<span class="text-xs" style="background:rgba(59,130,246,0.15);color:#3b82f6;padding:1px 6px;border-radius:4px;">' + escapeHtml(t('apiKeys.migrated')) + '</span>'
-      : '';
-    const disabled = !item.enabled
-      ? '<span class="text-xs" style="background:rgba(239,68,68,0.15);color:#ef4444;padding:1px 6px;border-radius:4px;">' + escapeHtml(t('apiKeys.disabled')) + '</span>'
-      : '';
-    const expired = item.expired
-      ? '<span class="text-xs" style="background:rgba(239,68,68,0.15);color:#ef4444;padding:1px 6px;border-radius:4px;">' + escapeHtml(t('apiKeys.expired')) + '</span>'
-      : '';
-    const tokensLine = usageLine(t('apiKeys.tokens'), item.tokensUsed || 0, item.tokenLimit || 0);
-    const creditsLine = usageLine(t('apiKeys.credits'), item.creditsUsed || 0, item.creditLimit || 0);
-    const requestsLine = '<div class="text-xs muted-text">' + escapeHtml(t('apiKeys.requests')) + ': ' + escapeHtml(formatNumber(item.requestsCount || 0)) + '</div>';
+    const badges = [];
+    if (item.enabled && !item.expired) {
+      badges.push('<span class="badge badge-success">' + escapeHtml(t('apiKeys.statusEnabled')) + '</span>');
+    }
+    if (!item.enabled) {
+      badges.push('<span class="badge badge-error">' + escapeHtml(t('apiKeys.disabled')) + '</span>');
+    }
+    if (item.expired) {
+      badges.push('<span class="badge badge-error">' + escapeHtml(t('apiKeys.expired')) + '</span>');
+    }
+    if (item.migrated) {
+      badges.push('<span class="badge badge-info">' + escapeHtml(t('apiKeys.migrated')) + '</span>');
+    }
     const expiryText = item.expiresAt
       ? new Date(item.expiresAt * 1000 - 1000).toLocaleDateString()
       : t('apiKeys.neverExpires');
-    const expiryLine = '<div class="text-xs muted-text">' + escapeHtml(t('apiKeys.expiry')) + ': ' + escapeHtml(expiryText) + '</div>';
-    return '<div class="card" data-apikey-id="' + id + '" style="margin-top:0.5rem;padding:0.75rem;">' +
-      '<div class="flex items-center gap-2" style="flex-wrap:wrap;justify-content:space-between;">' +
-        '<div class="flex items-center gap-2" style="flex-wrap:wrap;min-width:0;">' +
-          '<span class="font-semibold">' + name + '</span>' +
-          migrated +
-          disabled +
-          expired +
-          '<span class="api-key-value text-xs muted-text font-mono" data-apikey-value="' + id + '" title="' + escapeAttr(displayKey) + '">' + keyText + '</span>' +
-          '<button class="btn btn-icon btn-sm btn-ghost api-key-icon-btn" type="button" data-apikey-action="toggleReveal" data-id="' + id + '" title="' + escapeAttr(eyeLabel) + '" aria-label="' + escapeAttr(eyeLabel) + '">' +
-            '<i class="fa-regular ' + eyeIcon + '" aria-hidden="true"></i></button>' +
+    return '<tr data-apikey-id="' + id + '">' +
+      '<td><span class="api-key-name">' + name + '</span></td>' +
+      '<td class="api-key-cell">' +
+        '<div class="api-key-card-key-row">' +
+          '<span class="api-key-value" data-apikey-value="' + id + '" title="' + escapeAttr(displayKey) + '">' + keyText + '</span>' +
+          '<button class="btn btn-icon btn-sm btn-ghost api-key-icon-btn" type="button" data-apikey-action="toggleReveal" data-id="' + id + '" title="' + escapeAttr(eyeLabel) + '" aria-label="' + escapeAttr(eyeLabel) + '" aria-pressed="' + (revealed ? 'true' : 'false') + '">' +
+            '<i class="' + eyeIcon + '" aria-hidden="true"></i></button>' +
           '<button class="btn btn-icon btn-sm btn-ghost api-key-icon-btn" type="button" data-apikey-action="copy" data-id="' + id + '" title="' + escapeAttr(t('apiKeys.copyKey')) + '" aria-label="' + escapeAttr(t('apiKeys.copyKey')) + '">' +
             '<i class="fa-regular fa-copy" aria-hidden="true"></i></button>' +
         '</div>' +
-        '<div class="flex items-center gap-2">' +
+      '</td>' +
+      '<td><div class="api-keys-status">' + badges.join('') + '</div></td>' +
+      '<td>' + usageCell(item.tokensUsed || 0, item.tokenLimit || 0) + '</td>' +
+      '<td>' + usageCell(item.creditsUsed || 0, item.creditLimit || 0) + '</td>' +
+      '<td class="num">' + escapeHtml(formatNumber(item.requestsCount || 0)) + '</td>' +
+      '<td class="num">' +
+        '<button type="button" class="btn btn-ghost btn-sm api-keys-ip-badge' + ((item.uniqueIps || 0) >= 2 ? ' is-multi' : '') + '" data-apikey-action="viewIPs" data-id="' + id + '" title="' + escapeAttr(t('apiKeys.viewIPs')) + '">' +
+          escapeHtml(formatNumber(item.uniqueIps || 0)) +
+        '</button>' +
+      '</td>' +
+      '<td>' + escapeHtml(expiryText) + '</td>' +
+      '<td class="api-keys-actions-cell">' +
+        '<div class="api-keys-row-actions">' +
           '<label class="switch" title="' + escapeAttr(item.enabled ? t('accounts.disable') : t('accounts.enable')) + '">' +
             '<input type="checkbox" data-apikey-action="toggle" data-id="' + id + '"' + (item.enabled ? ' checked' : '') + ' />' +
             '<span class="slider"></span>' +
@@ -265,16 +391,43 @@ export function renderApiKeys() {
           '<button class="btn btn-outline btn-sm" type="button" data-apikey-action="reset" data-id="' + id + '">' + escapeHtml(t('apiKeys.actionReset')) + '</button>' +
           '<button class="btn btn-danger btn-sm" type="button" data-apikey-action="delete" data-id="' + id + '">' + escapeHtml(t('apiKeys.actionDelete')) + '</button>' +
         '</div>' +
-      '</div>' +
-      '<div style="margin-top:0.5rem;display:grid;gap:0.35rem;">' +
-        tokensLine +
-        creditsLine +
-        requestsLine +
-        expiryLine +
-      '</div>' +
-    '</div>';
+      '</td>' +
+    '</tr>';
   }).join('');
-  list.innerHTML = html;
+
+  const from = slice.total ? (slice.start + 1) : 0;
+  const to = Math.min(slice.start + slice.size, slice.total);
+  const pager = '<div class="api-keys-pagination">' +
+    '<span>' + escapeHtml(t('apiKeys.showing', String(from), String(to), String(slice.total))) + '</span>' +
+    '<div class="api-keys-pagination-controls">' +
+      '<button class="btn btn-outline btn-sm" type="button" data-apikey-page="prev"' + (slice.page <= 1 ? ' disabled' : '') + '>' +
+        escapeHtml(t('apiKeys.prev')) +
+      '</button>' +
+      '<span>' + escapeHtml(t('apiKeys.pageOf', String(slice.page), String(slice.pages))) + '</span>' +
+      '<button class="btn btn-outline btn-sm" type="button" data-apikey-page="next"' + (slice.page >= slice.pages ? ' disabled' : '') + '>' +
+        escapeHtml(t('apiKeys.next')) +
+      '</button>' +
+    '</div>' +
+  '</div>';
+
+  list.innerHTML =
+    '<div class="api-keys-table-wrap">' +
+      '<table class="api-keys-table">' +
+        '<thead><tr>' +
+          '<th>' + escapeHtml(t('apiKeys.colName')) + '</th>' +
+          '<th>' + escapeHtml(t('apiKeys.colKey')) + '</th>' +
+          '<th>' + escapeHtml(t('apiKeys.colStatus')) + '</th>' +
+          '<th>' + escapeHtml(t('apiKeys.tokens')) + '</th>' +
+          '<th>' + escapeHtml(t('apiKeys.credits')) + '</th>' +
+          '<th class="num">' + escapeHtml(t('apiKeys.requests')) + '</th>' +
+          '<th class="num">' + escapeHtml(t('apiKeys.colIPs')) + '</th>' +
+          '<th>' + escapeHtml(t('apiKeys.expiry')) + '</th>' +
+          '<th>' + escapeHtml(t('apiKeys.colActions')) + '</th>' +
+        '</tr></thead>' +
+        '<tbody>' + rows + '</tbody>' +
+      '</table>' +
+    '</div>' +
+    pager;
 }
 
 // Expiry uses browser-local time. The date picker holds the last valid day;
@@ -383,6 +536,7 @@ export async function toggleApiKeyEntry(id, enabled) {
     const item = state.apiKeysCache.find(x => x.id === id);
     if (item) item.enabled = enabled;
     renderApiKeys();
+    renderOverviewApiKeyStats();
   } catch (e) {
     toast((e && e.message) || t('common.saveFailed'), 'error');
     await loadApiKeys();
@@ -445,16 +599,18 @@ export async function fetchApiKeyPlaintext(id) {
 export async function toggleApiKeyReveal(id) {
   if (!id) return;
   if (!state.apiKeyRevealed) state.apiKeyRevealed = {};
+  // Hide path: always return to masked value without another network call.
+  if (state.apiKeyRevealed[id] === true) {
+    state.apiKeyRevealed[id] = false;
+    renderApiKeys();
+    return;
+  }
   try {
-    if (state.apiKeyRevealed[id]) {
-      state.apiKeyRevealed[id] = false;
-      renderApiKeys();
-      return;
-    }
     await fetchApiKeyPlaintext(id);
     state.apiKeyRevealed[id] = true;
     renderApiKeys();
   } catch (e) {
+    state.apiKeyRevealed[id] = false;
     toast((e && e.message) || t('apiKeys.revealFailed'), 'error');
   }
 }
@@ -504,8 +660,18 @@ export function bindApiKeyEvents() {
   const list = $('apiKeysList');
   if (list) {
     list.addEventListener('click', e => {
+      const pageBtn = e.target.closest('[data-apikey-page]');
+      if (pageBtn) {
+        e.preventDefault();
+        const dir = pageBtn.dataset.apikeyPage;
+        if (dir === 'prev') setApiKeysPage((state.apiKeysPage || 1) - 1);
+        else if (dir === 'next') setApiKeysPage((state.apiKeysPage || 1) + 1);
+        return;
+      }
       const btn = e.target.closest('[data-apikey-action]');
       if (!btn) return;
+      e.preventDefault();
+      e.stopPropagation();
       const action = btn.dataset.apikeyAction;
       const id = btn.dataset.id;
       if (!id) return;
@@ -516,6 +682,7 @@ export function bindApiKeyEvents() {
       else if (action === 'reset') resetApiKeyUsageEntry(id, name);
       else if (action === 'toggleReveal') toggleApiKeyReveal(id);
       else if (action === 'copy') copyApiKeyValue(id, btn);
+      else if (action === 'viewIPs') openApiKeyIPsModal(id, name);
     });
     list.addEventListener('change', e => {
       const cb = e.target.closest('input[data-apikey-action="toggle"]');
@@ -524,6 +691,18 @@ export function bindApiKeyEvents() {
       if (!id) return;
       toggleApiKeyEntry(id, cb.checked);
     });
+  }
+  const search = $('apiKeysSearch');
+  if (search) {
+    search.addEventListener('input', onApiKeysFilterChange);
+  }
+  const status = $('apiKeysStatusFilter');
+  if (status) {
+    status.addEventListener('change', onApiKeysFilterChange);
+  }
+  const pageSize = $('apiKeysPageSize');
+  if (pageSize) {
+    pageSize.addEventListener('change', onApiKeysFilterChange);
   }
   const addBtn = $('addApiKeyBtn');
   if (addBtn) addBtn.addEventListener('click', () => openApiKeyModal(null));
@@ -541,6 +720,443 @@ export function bindApiKeyEvents() {
   if (copyBtn) copyBtn.addEventListener('click', copyNewApiKey);
   bindDialogBackdropClose('apiKeyModal', closeApiKeyModal);
   bindDialogBackdropClose('apiKeyShowModal', closeShowApiKeyModal);
+
+  const saveSec = $('saveSecurityBtn');
+  if (saveSec) saveSec.addEventListener('click', saveSecuritySettings);
+  const blockBtn = $('securityBlockBtn');
+  if (blockBtn) blockBtn.addEventListener('click', async () => {
+    const ipEl = $('securityBlockIP');
+    const reasonEl = $('securityBlockReason');
+    const ok = await blockIPAddress(ipEl ? ipEl.value : '', reasonEl ? reasonEl.value : '');
+    if (ok && ipEl) ipEl.value = '';
+    if (ok && reasonEl) reasonEl.value = '';
+  });
+  const blockedList = $('blockedIPsList');
+  if (blockedList) blockedList.addEventListener('click', e => {
+    const btn = e.target.closest('[data-unblock-ip]');
+    if (!btn) return;
+    unblockIPAddress(btn.dataset.unblockIp);
+  });
+  const ipsBody = $('apiKeyIPsBody');
+  if (ipsBody) ipsBody.addEventListener('click', async e => {
+    const btn = e.target.closest('[data-ban-ip]');
+    if (!btn) return;
+    const ip = btn.dataset.banIp;
+    const ok = await confirmAction(t('apiKeys.banIPConfirm', ip), {
+      title: t('apiKeys.banIP'),
+      confirmText: t('apiKeys.banIP'),
+      variant: 'danger'
+    });
+    if (!ok) return;
+    await blockIPAddress(ip, 'admin');
+  });
+  const ipsClose = $('apiKeyIPsCloseBtn');
+  if (ipsClose) ipsClose.addEventListener('click', closeApiKeyIPsModal);
+  const ipsCloseX = $('apiKeyIPsModalClose');
+  if (ipsCloseX) ipsCloseX.addEventListener('click', closeApiKeyIPsModal);
+  bindDialogBackdropClose('apiKeyIPsModal', closeApiKeyIPsModal);
+}
+
+
+// Overview API key analytics (client-side aggregate from apiKeysCache)
+
+export function aggregateApiKeyStats(keys, nowMs = Date.now()) {
+  const list = Array.isArray(keys) ? keys : [];
+  const nowSec = Math.floor(nowMs / 1000);
+  const dayMs = 86400000;
+  const nowDate = new Date(nowMs);
+  const todayLocal0 = new Date(nowDate.getFullYear(), nowDate.getMonth(), nowDate.getDate()).getTime();
+  const windowStart = todayLocal0 - 13 * dayMs;
+  const created7dCut = nowSec - 7 * 86400;
+  const expiringCut = nowSec + 7 * 86400;
+
+  let total = 0;
+  let active = 0;
+  let disabled = 0;
+  let expired = 0;
+  let expiringSoon = 0;
+  let created7d = 0;
+  let sumRequests = 0;
+  let sumTokens = 0;
+  let sumCredits = 0;
+  let neverUsed = 0;
+  const createdBuckets = new Array(14).fill(0);
+  const topCandidates = [];
+
+  for (let i = 0; i < list.length; i++) {
+    const item = list[i];
+    if (!item) continue;
+    total++;
+
+    const isExpired = !!item.expired || (item.expiresAt > 0 && nowSec >= item.expiresAt);
+    if (isExpired) expired++;
+    else if (!item.enabled) disabled++;
+    else active++;
+
+    if (!isExpired && item.expiresAt > 0 && item.expiresAt <= expiringCut && item.expiresAt > nowSec) {
+      expiringSoon++;
+    }
+
+    const createdAt = item.createdAt || 0;
+    if (createdAt >= created7dCut) created7d++;
+    if (createdAt > 0) {
+      const createdMs = createdAt * 1000;
+      if (createdMs >= windowStart && createdMs < todayLocal0 + dayMs) {
+        const idx = Math.floor((createdMs - windowStart) / dayMs);
+        if (idx >= 0 && idx < 14) createdBuckets[idx]++;
+      }
+    }
+
+    const req = item.requestsCount || 0;
+    const tok = item.tokensUsed || 0;
+    const cred = item.creditsUsed || 0;
+    sumRequests += req;
+    sumTokens += tok;
+    sumCredits += cred;
+    if (!item.lastUsedAt && !req) neverUsed++;
+
+    const tokenLimit = item.tokenLimit || 0;
+    const creditLimit = item.creditLimit || 0;
+    const tokenRatio = tokenLimit > 0 ? tok / tokenLimit : 0;
+    const creditRatio = creditLimit > 0 ? cred / creditLimit : 0;
+    const pressure = Math.max(tokenRatio, creditRatio);
+    topCandidates.push({
+      id: item.id || '',
+      name: item.name || '',
+      enabled: !!item.enabled,
+      expired: isExpired,
+      requestsCount: req,
+      tokensUsed: tok,
+      creditsUsed: cred,
+      tokenLimit: tokenLimit,
+      creditLimit: creditLimit,
+      pressure: pressure
+    });
+  }
+
+  topCandidates.sort((a, b) => {
+    if (b.requestsCount !== a.requestsCount) return b.requestsCount - a.requestsCount;
+    if (b.tokensUsed !== a.tokensUsed) return b.tokensUsed - a.tokensUsed;
+    return (b.pressure || 0) - (a.pressure || 0);
+  });
+  const top = topCandidates.filter(x => x.requestsCount > 0).slice(0, 5);
+
+  const fingerprint = [
+    total, active, disabled, expired, expiringSoon, created7d,
+    sumRequests, sumTokens, Math.round(sumCredits * 1000),
+    createdBuckets.join(','),
+    top.map(x => x.id + ':' + x.requestsCount + ':' + x.tokensUsed).join(',')
+  ].join('|');
+
+  return {
+    total, active, disabled, expired, expiringSoon, created7d,
+    createdBuckets, sumRequests, sumTokens, sumCredits, neverUsed, top,
+    fingerprint, windowStart, todayLocal0
+  };
+}
+
+function setText(id, value) {
+  const el = $(id);
+  if (el) el.textContent = value;
+}
+
+function renderOverviewStatusDist(agg) {
+  const bar = $('apiKeyStatusBar');
+  const legend = $('apiKeyStatusLegend');
+  if (!bar || !legend) return;
+
+  const total = Math.max(agg.total, 0);
+  const aria = t('stats.apiKeysStatusAria', String(agg.active), String(agg.disabled), String(agg.expired));
+  bar.setAttribute('aria-label', aria);
+
+  if (!total) {
+    bar.innerHTML = '';
+    legend.innerHTML = '<li class="muted-text">' + escapeHtml(t('stats.apiKeysNoKeys')) + '</li>';
+    return;
+  }
+
+  const segs = [
+    { key: 'active', count: agg.active, cls: 'overview-status-seg--active', sw: 'overview-status-swatch--active', label: t('apiKeys.statusEnabled') },
+    { key: 'disabled', count: agg.disabled, cls: 'overview-status-seg--disabled', sw: 'overview-status-swatch--disabled', label: t('apiKeys.disabled') },
+    { key: 'expired', count: agg.expired, cls: 'overview-status-seg--expired', sw: 'overview-status-swatch--expired', label: t('apiKeys.expired') }
+  ];
+
+  bar.innerHTML = segs.map(s => {
+    if (!s.count) return '';
+    const pct = (100 * s.count / total).toFixed(2);
+    return '<span class="overview-status-seg ' + s.cls + '" style="width:' + pct + '%" title="' +
+      escapeAttr(s.label + ': ' + s.count) + '"></span>';
+  }).join('');
+
+  legend.innerHTML = segs.map(s => {
+    const pct = total ? Math.round(100 * s.count / total) : 0;
+    return '<li><span class="overview-status-swatch ' + s.sw + '" aria-hidden="true"></span>' +
+      escapeHtml(s.label) + ' <strong>' + escapeHtml(String(s.count)) + '</strong>' +
+      ' <span class="muted-text">(' + pct + '%)</span></li>';
+  }).join('');
+}
+
+function renderOverviewCreatedChart(agg) {
+  const chart = $('apiKeyCreatedChart');
+  const summary = $('apiKeyCreatedSummary');
+  if (!chart) return;
+
+  chart.setAttribute('aria-label', t('stats.apiKeysCreatedAria'));
+  const buckets = agg.createdBuckets || [];
+  const maxH = Math.max(1, ...buckets);
+  const periodTotal = buckets.reduce((a, b) => a + b, 0);
+  const dayMs = 86400000;
+  const start = agg.windowStart || (Date.now() - 13 * dayMs);
+
+  let html = '';
+  for (let i = 0; i < 14; i++) {
+    const count = buckets[i] || 0;
+    const h = Math.max(2, Math.round(100 * count / maxH));
+    const d = new Date(start + i * dayMs);
+    const label = String(d.getMonth() + 1).padStart(2, '0') + '/' + String(d.getDate()).padStart(2, '0');
+    const showLabel = i === 0 || i === 6 || i === 13;
+    html += '<div class="overview-created-col" title="' + escapeAttr(label + ': ' + count) + '">' +
+      '<div class="overview-created-bar' + (count ? '' : ' is-zero') + '" style="height:' + (count ? h : 2) + '%"></div>' +
+      '<span class="overview-created-label">' + (showLabel ? escapeHtml(label) : '') + '</span>' +
+      '</div>';
+  }
+  chart.innerHTML = html;
+  if (summary) summary.textContent = t('stats.apiKeysCreatedCount', String(periodTotal));
+}
+
+function renderOverviewTopTable(agg) {
+  const host = $('apiKeyTopTable');
+  if (!host) return;
+
+  if (!agg.total) {
+    host.innerHTML = '<div class="empty-state">' + escapeHtml(t('stats.apiKeysNoKeys')) + '</div>';
+    return;
+  }
+  if (!agg.top || !agg.top.length) {
+    host.innerHTML = '<div class="empty-state">' + escapeHtml(t('stats.apiKeysTopEmpty')) + '</div>';
+    return;
+  }
+
+  const rows = agg.top.map(item => {
+    const name = item.name
+      ? escapeHtml(item.name)
+      : '<span class="muted-text">' + escapeHtml(t('apiKeys.unnamed')) + '</span>';
+    let statusBadge;
+    if (item.expired) statusBadge = '<span class="badge badge-error">' + escapeHtml(t('apiKeys.expired')) + '</span>';
+    else if (!item.enabled) statusBadge = '<span class="badge badge-error">' + escapeHtml(t('apiKeys.disabled')) + '</span>';
+    else statusBadge = '<span class="badge badge-success">' + escapeHtml(t('apiKeys.statusEnabled')) + '</span>';
+
+    const pressureCell = (item.tokenLimit > 0 || item.creditLimit > 0)
+      ? (
+          (item.tokenLimit > 0 ? usageBar(item.tokensUsed, item.tokenLimit) : '') +
+          (item.creditLimit > 0 ? usageBar(item.creditsUsed, item.creditLimit) : '')
+        )
+      : '<span class="muted-text">' + escapeHtml(t('apiKeys.unlimited')) + '</span>';
+
+    return '<tr>' +
+      '<td>' + name + '</td>' +
+      '<td>' + statusBadge + '</td>' +
+      '<td class="num">' + escapeHtml(formatNumber(item.requestsCount || 0)) + '</td>' +
+      '<td class="num">' + escapeHtml(formatNumber(item.tokensUsed || 0)) + '</td>' +
+      '<td class="num">' + escapeHtml(formatNumber(item.creditsUsed || 0)) + '</td>' +
+      '<td class="api-keys-usage-cell">' + pressureCell + '</td>' +
+      '</tr>';
+  }).join('');
+
+  host.innerHTML =
+    '<div class="usage-table-wrap">' +
+      '<table class="usage-table">' +
+        '<thead><tr>' +
+          '<th>' + escapeHtml(t('apiKeys.colName')) + '</th>' +
+          '<th>' + escapeHtml(t('apiKeys.colStatus')) + '</th>' +
+          '<th class="num">' + escapeHtml(t('apiKeys.requests')) + '</th>' +
+          '<th class="num">' + escapeHtml(t('apiKeys.tokens')) + '</th>' +
+          '<th class="num">' + escapeHtml(t('apiKeys.credits')) + '</th>' +
+          '<th>' + escapeHtml(t('stats.apiKeysColPressure')) + '</th>' +
+        '</tr></thead>' +
+        '<tbody>' + rows + '</tbody>' +
+      '</table>' +
+    '</div>';
+}
+
+export function renderOverviewApiKeyStats(force) {
+  const root = $('overviewApiKeys') || $('viewOverview');
+  if (!root) return;
+
+  const agg = aggregateApiKeyStats(state.apiKeysCache || []);
+  const langTag = state.currentLang || '';
+  const fp = langTag + '|' + agg.fingerprint;
+  if (!force && state.overviewApiKeyStatsFp === fp) {
+    // Still refresh KPI text cheaply in case format locale-independent numbers only —
+    // skip chart/table rebuild.
+    return;
+  }
+  state.overviewApiKeyStatsFp = fp;
+
+  setText('statApiKeysTotal', formatNumber(agg.total));
+  setText('statApiKeysActive', formatNumber(agg.active));
+  setText('statApiKeysExpired', formatNumber(agg.expired));
+  setText('statApiKeysRequests', formatNumber(agg.sumRequests));
+  setText('statApiKeysTokens', formatNumber(agg.sumTokens));
+
+  const createdLabel = $('statApiKeysCreated7dLabel');
+  if (createdLabel) createdLabel.textContent = t('stats.apiKeysCreated7d', formatNumber(agg.created7d));
+  const disabledLabel = $('statApiKeysDisabledLabel');
+  if (disabledLabel) disabledLabel.textContent = t('stats.apiKeysDisabled', formatNumber(agg.disabled));
+  const expiringLabel = $('statApiKeysExpiringSoonLabel');
+  if (expiringLabel) expiringLabel.textContent = t('stats.apiKeysExpiringSoon', formatNumber(agg.expiringSoon));
+
+  renderOverviewStatusDist(agg);
+  renderOverviewCreatedChart(agg);
+  renderOverviewTopTable(agg);
+}
+
+
+// --- Access security (blocked IPs + trust proxy) ---
+
+export async function loadSecuritySettings() {
+  try {
+    const res = await api('/security/settings');
+    if (res.ok) {
+      const d = await res.json();
+      const el = $('securityTrustProxy');
+      if (el) el.checked = !!d.trustProxyHeaders;
+    }
+  } catch (e) { /* ignore */ }
+  await loadBlockedIPs();
+}
+
+export async function saveSecuritySettings() {
+  try {
+    const el = $('securityTrustProxy');
+    const res = await api('/security/settings', {
+      method: 'POST',
+      body: JSON.stringify({ trustProxyHeaders: !!(el && el.checked) })
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok || d.success === false) throw new Error(d.error || t('common.saveFailed'));
+    toast(t('security.saved'), 'success');
+  } catch (e) {
+    toastError((e && e.message) || t('common.saveFailed'));
+  }
+}
+
+export async function loadBlockedIPs() {
+  const host = $('blockedIPsList');
+  if (!host) return;
+  try {
+    const res = await api('/security/blocked-ips');
+    if (!res.ok) throw new Error('http');
+    const d = await res.json();
+    const list = Array.isArray(d.blockedIPs) ? d.blockedIPs : [];
+    if (!list.length) {
+      host.innerHTML = '<div class="empty-state">' + escapeHtml(t('security.blockedEmpty')) + '</div>';
+      return;
+    }
+    host.innerHTML = list.map(item => {
+      const ip = item.ip || item.IP || item;
+      const ipStr = typeof ip === 'string' ? ip : String(ip || '');
+      const reason = (item && item.reason) || '';
+      return '<div class="blocked-ip-row" data-ip="' + escapeAttr(ipStr) + '">' +
+        '<div class="blocked-ip-meta">' +
+          '<div class="blocked-ip-addr">' + escapeHtml(ipStr) + '</div>' +
+          (reason ? '<div class="blocked-ip-reason">' + escapeHtml(reason) + '</div>' : '') +
+        '</div>' +
+        '<button type="button" class="btn btn-outline btn-sm" data-unblock-ip="' + escapeAttr(ipStr) + '">' +
+          escapeHtml(t('security.unblock')) +
+        '</button>' +
+      '</div>';
+    }).join('');
+  } catch (e) {
+    host.innerHTML = '<div class="empty-state">' + escapeHtml(t('common.failed')) + '</div>';
+  }
+}
+
+export async function blockIPAddress(ip, reason) {
+  ip = (ip || '').trim();
+  if (!ip) {
+    toastError(t('security.invalidIP'));
+    return false;
+  }
+  try {
+    const res = await api('/security/blocked-ips', {
+      method: 'POST',
+      body: JSON.stringify({ ip: ip, reason: (reason || '').trim() })
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok || d.success === false) throw new Error(d.error || t('common.failed'));
+    toast(t('security.blocked'), 'success');
+    await loadBlockedIPs();
+    return true;
+  } catch (e) {
+    toastError((e && e.message) || t('common.failed'));
+    return false;
+  }
+}
+
+export async function unblockIPAddress(ip) {
+  ip = (ip || '').trim();
+  if (!ip) return;
+  try {
+    const res = await api('/security/blocked-ips/unblock', {
+      method: 'POST',
+      body: JSON.stringify({ ip: ip })
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok || d.success === false) throw new Error(d.error || t('common.failed'));
+    toast(t('security.unblocked'), 'success');
+    await loadBlockedIPs();
+  } catch (e) {
+    toastError((e && e.message) || t('common.failed'));
+  }
+}
+
+export async function openApiKeyIPsModal(id, name) {
+  const title = $('apiKeyIPsModalTitle');
+  if (title) {
+    title.textContent = t('apiKeys.ipsTitle') + (name ? ': ' + name : '');
+  }
+  const body = $('apiKeyIPsBody');
+  if (body) body.innerHTML = '<div class="empty-state">' + escapeHtml(t('api.loading') || '...') + '</div>';
+  openDialog('apiKeyIPsModal');
+  try {
+    const res = await api('/api-keys/' + encodeURIComponent(id) + '/ips');
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(d.error || t('common.failed'));
+    const ips = Array.isArray(d.ips) ? d.ips : [];
+    if (!ips.length) {
+      body.innerHTML = '<div class="empty-state">' + escapeHtml(t('apiKeys.ipsEmpty')) + '</div>';
+      return;
+    }
+    const rows = ips.map(item => {
+      const ip = item.ip || '';
+      const last = item.lastSeen ? new Date(item.lastSeen * 1000).toLocaleString() : '-';
+      const first = item.firstSeen ? new Date(item.firstSeen * 1000).toLocaleString() : '-';
+      return '<tr>' +
+        '<td class="api-key-ips-ip">' + escapeHtml(ip) + '</td>' +
+        '<td class="num">' + escapeHtml(formatNumber(item.requests || 0)) + '</td>' +
+        '<td>' + escapeHtml(first) + '</td>' +
+        '<td>' + escapeHtml(last) + '</td>' +
+        '<td><button type="button" class="btn btn-danger btn-sm" data-ban-ip="' + escapeAttr(ip) + '">' +
+          escapeHtml(t('apiKeys.banIP')) + '</button></td>' +
+      '</tr>';
+    }).join('');
+    body.innerHTML =
+      '<div class="usage-table-wrap"><table class="api-key-ips-table">' +
+        '<thead><tr>' +
+          '<th>IP</th>' +
+          '<th class="num">' + escapeHtml(t('apiKeys.ipsRequests')) + '</th>' +
+          '<th>' + escapeHtml(t('apiKeys.ipsFirstSeen')) + '</th>' +
+          '<th>' + escapeHtml(t('apiKeys.ipsLastSeen')) + '</th>' +
+          '<th></th>' +
+        '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+  } catch (e) {
+    if (body) body.innerHTML = '<div class="empty-state">' + escapeHtml((e && e.message) || t('common.failed')) + '</div>';
+  }
+}
+
+export function closeApiKeyIPsModal() {
+  closeDialog('apiKeyIPsModal');
 }
 
 // Prompt filter rules

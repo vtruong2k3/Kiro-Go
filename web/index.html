@@ -202,6 +202,88 @@
           </div>
         </div>
       </div>
+
+      <div class="card overview-apikeys" id="overviewApiKeys">
+        <div class="card-header">
+          <span class="card-title" data-i18n="stats.apiKeysTitle"></span>
+          <div class="card-actions">
+            <button type="button" class="btn btn-outline btn-sm" id="overviewManageKeysBtn">
+              <i class="fa-solid fa-key" aria-hidden="true"></i>
+              <span class="btn-text" data-i18n="stats.apiKeysManage"></span>
+            </button>
+          </div>
+        </div>
+
+        <div class="stats-grid api-key-stats-grid">
+          <div class="stat-card">
+            <div class="stat-card-title" data-i18n="stats.apiKeysTotal"></div>
+            <div class="stat-body">
+              <div class="stat-main">
+                <div class="stat-value" id="statApiKeysTotal">0</div>
+                <div class="stat-sub">
+                  <span class="stat-label" id="statApiKeysCreated7dLabel">0 new / 7d</span>
+                </div>
+              </div>
+              <i class="fa-solid fa-key stat-icon" aria-hidden="true"></i>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-card-title" data-i18n="stats.apiKeysActive"></div>
+            <div class="stat-body">
+              <div class="stat-main">
+                <div class="stat-value" id="statApiKeysActive">0</div>
+                <div class="stat-sub">
+                  <span class="stat-label" id="statApiKeysDisabledLabel">0 disabled</span>
+                </div>
+              </div>
+              <i class="fa-solid fa-circle-check stat-icon" aria-hidden="true"></i>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-card-title" data-i18n="stats.apiKeysExpired"></div>
+            <div class="stat-body">
+              <div class="stat-main">
+                <div class="stat-value" id="statApiKeysExpired">0</div>
+                <div class="stat-sub">
+                  <span class="stat-label" id="statApiKeysExpiringSoonLabel">0 expiring soon</span>
+                </div>
+              </div>
+              <i class="fa-solid fa-hourglass-end stat-icon" aria-hidden="true"></i>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-card-title" data-i18n="stats.apiKeysRequests"></div>
+            <div class="stat-body">
+              <div class="stat-main">
+                <div class="stat-value" id="statApiKeysRequests">0</div>
+                <div class="stat-sub">
+                  <span class="stat-sub-sec"><span class="stat-value-sm" id="statApiKeysTokens">0</span> <span
+                      class="stat-label" data-i18n="stats.tokens"></span></span>
+                </div>
+              </div>
+              <i class="fa-solid fa-chart-simple stat-icon" aria-hidden="true"></i>
+            </div>
+          </div>
+        </div>
+
+        <div class="overview-key-visuals">
+          <section class="overview-key-panel" aria-labelledby="apiKeyStatusTitle">
+            <h3 id="apiKeyStatusTitle" class="overview-key-panel-title" data-i18n="stats.apiKeysStatusTitle"></h3>
+            <div id="apiKeyStatusBar" class="overview-status-bar" role="img" aria-label=""></div>
+            <ul id="apiKeyStatusLegend" class="overview-status-legend"></ul>
+          </section>
+          <section class="overview-key-panel" aria-labelledby="apiKeyCreatedTitle">
+            <h3 id="apiKeyCreatedTitle" class="overview-key-panel-title" data-i18n="stats.apiKeysCreatedTitle"></h3>
+            <div id="apiKeyCreatedChart" class="overview-created-chart" role="img" aria-label=""></div>
+            <p id="apiKeyCreatedSummary" class="overview-created-summary muted-text"></p>
+          </section>
+        </div>
+
+        <div class="overview-key-top">
+          <h3 class="overview-key-panel-title" data-i18n="stats.apiKeysTopTitle"></h3>
+          <div id="apiKeyTopTable"></div>
+        </div>
+      </div>
       </div>
 
       <!-- Providers landing view -->
@@ -288,29 +370,78 @@
 
       <!-- API Keys view -->
       <div id="viewApikeys" class="view hidden">
-        <!-- API settings -->
-        <div class="card">
-          <div class="card-header"><span class="card-title" data-i18n="settings.apiSettings"></span></div>
-          <div class="form-group">
-            <label class="flex items-center gap-2">
+        <div class="card api-access-card">
+          <div class="card-header">
+            <span class="card-title" data-i18n="settings.apiSettings"></span>
+          </div>
+          <div class="form-group api-access-row">
+            <label class="api-key-switch-row">
               <span class="switch"><input type="checkbox" id="requireApiKey" /><span class="slider"></span></span>
               <span data-i18n="settings.enableApiKey"></span>
             </label>
             <small data-i18n="apiKeys.requireHint"></small>
           </div>
           <button class="btn btn-primary btn-sm" id="saveRequireApiKeyBtn" data-i18n="settings.saveApiKey"></button>
+        </div>
 
-          <div class="form-group" style="margin-top: 1rem;">
-            <div class="flex items-center gap-2" style="justify-content: space-between;">
-              <label class="font-semibold" data-i18n="apiKeys.listTitle"></label>
+
+        <div class="card security-card" id="securityCard">
+          <div class="card-header">
+            <span class="card-title" data-i18n="security.title"></span>
+          </div>
+          <div class="form-group">
+            <label class="api-key-switch-row">
+              <span class="switch"><input type="checkbox" id="securityTrustProxy" /><span class="slider"></span></span>
+              <span data-i18n="security.trustProxy"></span>
+            </label>
+            <small data-i18n="security.trustProxyHint"></small>
+          </div>
+          <button class="btn btn-primary btn-sm" id="saveSecurityBtn" type="button" data-i18n="common.save"></button>
+          <div class="security-blocked-section">
+            <h3 class="overview-key-panel-title" data-i18n="security.blockedTitle"></h3>
+            <div class="security-block-form">
+              <input type="text" id="securityBlockIP" data-i18n-placeholder="security.ipPlaceholder" autocomplete="off" />
+              <input type="text" id="securityBlockReason" data-i18n-placeholder="security.reasonPlaceholder" autocomplete="off" />
+              <button class="btn btn-danger btn-sm" id="securityBlockBtn" type="button" data-i18n="security.blockIP"></button>
+            </div>
+            <div id="blockedIPsList" class="blocked-ips-list"></div>
+          </div>
+        </div>
+
+        <div class="card api-keys-card">
+          <div class="card-header">
+            <span class="card-title" data-i18n="apiKeys.listTitle"></span>
+            <div class="card-actions">
               <button class="btn btn-outline btn-sm" id="addApiKeyBtn" type="button">
                 <i class="fa-solid fa-plus"></i>
                 <span data-i18n="apiKeys.add"></span>
               </button>
             </div>
-            <small data-i18n="apiKeys.listHint"></small>
           </div>
-          <div id="apiKeysList"></div>
+          <p class="api-keys-hint" data-i18n="apiKeys.listHint"></p>
+          <div class="api-keys-toolbar">
+            <div class="api-keys-toolbar-row api-keys-toolbar-filters">
+              <input type="search" id="apiKeysSearch" class="api-keys-search" data-i18n-placeholder="apiKeys.searchPlaceholder" autocomplete="off" />
+              <select id="apiKeysStatusFilter" class="api-keys-status-filter" data-i18n-aria-label="apiKeys.filterStatus">
+                <option value="all" data-i18n="apiKeys.filterAll"></option>
+                <option value="enabled" data-i18n="apiKeys.filterEnabled"></option>
+                <option value="disabled" data-i18n="apiKeys.filterDisabled"></option>
+                <option value="expired" data-i18n="apiKeys.filterExpired"></option>
+              </select>
+            </div>
+            <div class="api-keys-toolbar-row api-keys-toolbar-meta">
+              <label class="api-keys-page-size-label">
+                <span data-i18n="apiKeys.pageSize"></span>
+                <select id="apiKeysPageSize" aria-label="page size">
+                  <option value="10">10</option>
+                  <option value="20" selected>20</option>
+                  <option value="50">50</option>
+                  <option value="100">100</option>
+                </select>
+              </label>
+            </div>
+          </div>
+          <div id="apiKeysList" class="api-keys-list"></div>
         </div>
       </div>
 
@@ -628,7 +759,7 @@
   </div>
 
   <div id="apiKeyModal" class="modal">
-    <div class="modal-content">
+    <div class="modal-content api-key-modal-content">
       <div class="modal-header">
         <span class="modal-title" id="apiKeyModalTitle" data-i18n="apiKeys.modalTitleCreate"></span>
         <button class="modal-close" id="apiKeyModalClose" type="button" aria-label=""
@@ -636,31 +767,33 @@
       </div>
       <div class="modal-body">
         <div class="form-group">
-          <label data-i18n="apiKeys.formName"></label>
-          <input type="text" id="apiKeyForm_name" data-i18n-placeholder="apiKeys.formNamePlaceholder" />
+          <label for="apiKeyForm_name" data-i18n="apiKeys.formName"></label>
+          <input type="text" id="apiKeyForm_name" data-i18n-placeholder="apiKeys.formNamePlaceholder" autocomplete="off" />
         </div>
         <div class="form-group">
-          <label data-i18n="apiKeys.formKey"></label>
-          <input type="text" id="apiKeyForm_key" data-i18n-placeholder="apiKeys.formKeyPlaceholder" />
+          <label for="apiKeyForm_key" data-i18n="apiKeys.formKey"></label>
+          <input type="text" id="apiKeyForm_key" class="api-key-form-key" data-i18n-placeholder="apiKeys.formKeyPlaceholder" autocomplete="off" spellcheck="false" />
         </div>
         <div class="form-group">
-          <label class="flex items-center gap-2">
+          <label class="api-key-switch-row" for="apiKeyForm_enabled">
             <span class="switch"><input type="checkbox" id="apiKeyForm_enabled" checked /><span class="slider"></span></span>
             <span data-i18n="apiKeys.formEnabled"></span>
           </label>
         </div>
-        <div class="form-group">
-          <label data-i18n="apiKeys.limitTokens"></label>
-          <input type="number" id="apiKeyForm_tokenLimit" min="0" step="1" value="0" />
-          <small data-i18n="apiKeys.limitHint"></small>
+        <div class="api-key-limits-grid">
+          <div class="form-group">
+            <label for="apiKeyForm_tokenLimit" data-i18n="apiKeys.limitTokens"></label>
+            <input type="number" id="apiKeyForm_tokenLimit" min="0" step="1" value="0" />
+            <small data-i18n="apiKeys.limitHint"></small>
+          </div>
+          <div class="form-group">
+            <label for="apiKeyForm_creditLimit" data-i18n="apiKeys.limitCredits"></label>
+            <input type="number" id="apiKeyForm_creditLimit" min="0" step="0.01" value="0" />
+            <small data-i18n="apiKeys.limitHint"></small>
+          </div>
         </div>
         <div class="form-group">
-          <label data-i18n="apiKeys.limitCredits"></label>
-          <input type="number" id="apiKeyForm_creditLimit" min="0" step="0.01" value="0" />
-          <small data-i18n="apiKeys.limitHint"></small>
-        </div>
-        <div class="form-group">
-          <label data-i18n="apiKeys.formExpiry"></label>
+          <label for="apiKeyForm_expiryDate" data-i18n="apiKeys.formExpiry"></label>
           <input type="date" id="apiKeyForm_expiryDate" />
           <small data-i18n="apiKeys.expiryHint"></small>
         </div>
@@ -672,8 +805,25 @@
     </div>
   </div>
 
+
+  <div id="apiKeyIPsModal" class="modal">
+    <div class="modal-content api-key-modal-content">
+      <div class="modal-header">
+        <span class="modal-title" id="apiKeyIPsModalTitle" data-i18n="apiKeys.ipsTitle"></span>
+        <button class="modal-close" id="apiKeyIPsModalClose" type="button" aria-label=""
+          data-i18n-aria-label="common.close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="apiKeyIPsBody"></div>
+        <div class="modal-footer">
+          <button class="btn btn-primary" id="apiKeyIPsCloseBtn" type="button" data-i18n="common.close"></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div id="apiKeyShowModal" class="modal">
-    <div class="modal-content">
+    <div class="modal-content api-key-modal-content">
       <div class="modal-header">
         <span class="modal-title" data-i18n="apiKeys.showTitle"></span>
         <button class="modal-close" id="apiKeyShowClose" type="button" aria-label=""
@@ -682,7 +832,7 @@
       <div class="modal-body">
         <p class="confirm-message" data-i18n="apiKeys.showWarning"></p>
         <div class="form-group">
-          <input type="text" id="apiKeyShowValue" readonly />
+          <input type="text" id="apiKeyShowValue" class="api-key-show-value" readonly spellcheck="false" />
         </div>
         <div class="modal-footer">
           <button class="btn btn-outline" id="apiKeyShowCopyBtn" type="button" data-i18n="apiKeys.copyBtn"></button>

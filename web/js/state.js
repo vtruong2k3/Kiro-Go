@@ -65,6 +65,11 @@ export const state = {
   apiKeyRevealCache: {},
   apiKeyRevealed: {},
   apiKeysCache: [],
+  apiKeysFilterKeyword: '',
+  apiKeysFilterStatus: 'all',
+  apiKeysPage: 1,
+  apiKeysPageSize: 20,
   apiKeyEditingId: '',
   apiKeyModalSubmitting: false,
+  overviewApiKeyStatsFp: '',
 };

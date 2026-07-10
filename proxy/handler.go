@@ -21,16 +21,18 @@ const tokenRefreshSkewSeconds int64 = 120
 
 // RequestLog stores details about a single API request (success or failure).
 type RequestLog struct {
-	Time      int64  `json:"time"`      // Unix timestamp
-	Endpoint  string `json:"endpoint"`  // claude/openai/responses
-	Model     string `json:"model"`     // Requested model
-	AccountID string `json:"accountId"` // Account used
-	Status    string `json:"status"`    // "success" or "error"
-	Error     string `json:"error"`     // Error message (empty on success)
-	ErrorType string `json:"errorType"` // Error category (empty on success)
-	Tokens    int    `json:"tokens"`    // Total tokens (input+output, 0 on failure)
-	Credits   float64 `json:"credits"`  // Credits consumed (0 on failure)
-	Duration  int64  `json:"duration"`  // Request duration in ms
+	Time      int64   `json:"time"`               // Unix timestamp
+	Endpoint  string  `json:"endpoint"`           // claude/openai/responses
+	Model     string  `json:"model"`              // Requested model
+	AccountID string  `json:"accountId"`          // Account used
+	Status    string  `json:"status"`             // "success" or "error"
+	Error     string  `json:"error"`              // Error message (empty on success)
+	ErrorType string  `json:"errorType"`          // Error category (empty on success)
+	Tokens    int     `json:"tokens"`             // Total tokens (input+output, 0 on failure)
+	Credits   float64 `json:"credits"`            // Credits consumed (0 on failure)
+	Duration  int64   `json:"duration"`           // Request duration in ms
+	ClientIP  string  `json:"clientIp,omitempty"` // Client IP (proxy-aware when trusted)
+	ApiKeyID  string  `json:"apiKeyId,omitempty"` // Matched multi-key id when auth required
 }
 
 const requestLogsMaxSize = 500
@@ -57,6 +59,8 @@ type Handler struct {
 	// 请求日志 (环形缓冲区，包含成功和失败)
 	requestLogs   []RequestLog
 	requestLogsMu sync.RWMutex
+	// Per-API-key client IP stats (memory only; not persisted).
+	ipTrack *ipTracker
 }
 
 type thinkingStreamSource int
@@ -244,6 +248,7 @@ func NewHandler() *Handler {
 		stopRefresh:     make(chan struct{}),
 		stopStatsSaver:  make(chan struct{}),
 		promptCache:     newPromptCacheTracker(defaultPromptCacheTTL),
+		ipTrack:         newIPTracker(),
 	}
 	// 启动后台刷新
 	go h.backgroundRefresh()
@@ -336,7 +341,9 @@ func (h *Handler) authenticateForClaude(w http.ResponseWriter, r *http.Request) 
 		h.sendClaudeError(w, ae.status, ae.code, ae.message)
 		return nil
 	}
-	return withApiKeyContext(r, entry)
+	ar := withApiKeyContext(r, entry)
+	h.trackAuthenticatedIP(ar, entry)
+	return ar
 }
 
 // authenticateForOpenAI runs authenticate and writes an OpenAI-style error on failure.
@@ -350,7 +357,21 @@ func (h *Handler) authenticateForOpenAI(w http.ResponseWriter, r *http.Request) 
 		h.sendOpenAIError(w, ae.status, ae.code, ae.message)
 		return nil
 	}
-	return withApiKeyContext(r, entry)
+	ar := withApiKeyContext(r, entry)
+	h.trackAuthenticatedIP(ar, entry)
+	return ar
+}
+
+// trackAuthenticatedIP records the client IP against the matched multi-key entry.
+func (h *Handler) trackAuthenticatedIP(r *http.Request, entry *config.ApiKeyEntry) {
+	if entry == nil || h == nil || h.ipTrack == nil {
+		return
+	}
+	ip := clientIPFromContext(r.Context())
+	if ip == "" {
+		ip = ClientIP(r, config.GetTrustProxyHeaders())
+	}
+	h.ipTrack.track(entry.ID, ip)
 }
 
 // ServeHTTP 路由分发
@@ -369,6 +390,23 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "OPTIONS" {
 		w.WriteHeader(204)
 		return
+	}
+
+	// Resolve client IP once; enforce global deny-list on public API surfaces.
+	if isPublicAPIPath(path) {
+		ip := ClientIP(r, config.GetTrustProxyHeaders())
+		r = withClientIPContext(r, ip)
+		if config.IsIPBlocked(ip) {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusForbidden)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": map[string]string{
+					"type":    "permission_error",
+					"message": "client IP is blocked",
+				},
+			})
+			return
+		}
 	}
 
 	// 路由
@@ -436,6 +474,23 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	default:
 		http.Error(w, "Not Found", 404)
+	}
+}
+
+// isPublicAPIPath reports whether path is a client-facing API that should honor IP bans.
+func isPublicAPIPath(path string) bool {
+	switch path {
+	case "/v1/messages", "/messages", "/anthropic/v1/messages",
+		"/v1/messages/count_tokens", "/messages/count_tokens",
+		"/v1/chat/completions", "/chat/completions",
+		"/v1/responses", "/responses",
+		"/v1/images/generations", "/images/generations",
+		"/v1/images/edits", "/images/edits",
+		"/v1/models", "/models",
+		"/v1/stats":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -905,15 +960,16 @@ func (h *Handler) handleClaudeMessagesInternal(w http.ResponseWriter, r *http.Re
 
 	// Stream or non-stream
 	apiKeyID := apiKeyIDFromContext(r.Context())
+	clientIP := clientIPFromContext(r.Context())
 	if req.Stream {
-		h.handleClaudeStream(w, kiroPayload, req.Model, thinking, thinkingResponseOpts, estimatedInputTokens, cacheProfile, apiKeyID)
+		h.handleClaudeStream(w, kiroPayload, req.Model, thinking, thinkingResponseOpts, estimatedInputTokens, cacheProfile, apiKeyID, clientIP)
 	} else {
-		h.handleClaudeNonStream(w, kiroPayload, req.Model, thinking, thinkingResponseOpts, estimatedInputTokens, cacheProfile, apiKeyID)
+		h.handleClaudeNonStream(w, kiroPayload, req.Model, thinking, thinkingResponseOpts, estimatedInputTokens, cacheProfile, apiKeyID, clientIP)
 	}
 }
 
 // handleClaudeStream Claude 流式响应
-func (h *Handler) handleClaudeStream(w http.ResponseWriter, payload *KiroPayload, model string, thinking bool, thinkingOpts claudeThinkingResponseOptions, estimatedInputTokens int, cacheProfile *promptCacheProfile, apiKeyID string) {
+func (h *Handler) handleClaudeStream(w http.ResponseWriter, payload *KiroPayload, model string, thinking bool, thinkingOpts claudeThinkingResponseOptions, estimatedInputTokens int, cacheProfile *promptCacheProfile, apiKeyID, clientIP string) {
 	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -1292,7 +1348,7 @@ func (h *Handler) handleClaudeStream(w http.ResponseWriter, payload *KiroPayload
 			if !messageStarted {
 				continue
 			}
-			h.recordFailureWithDetails("claude", model, account.ID, err)
+			h.recordFailureWithDetailsMeta("claude", model, account.ID, err, clientIP, apiKeyID)
 			h.sendSSE(w, flusher, "error", map[string]interface{}{
 				"type":  "error",
 				"error": map[string]string{"type": "api_error", "message": err.Error()},
@@ -1325,7 +1381,7 @@ func (h *Handler) handleClaudeStream(w http.ResponseWriter, payload *KiroPayload
 		h.pool.RecordSuccess(account.ID)
 		h.pool.UpdateStats(account.ID, inputTokens+outputTokens, credits)
 		h.promptCache.Update(account.ID, cacheProfile)
-		h.recordSuccessLog("claude", model, account.ID, inputTokens+outputTokens, credits, time.Since(reqStart).Milliseconds())
+		h.recordSuccessLogMeta("claude", model, account.ID, inputTokens+outputTokens, credits, time.Since(reqStart).Milliseconds(), clientIP, apiKeyID)
 
 		stopReason := "end_turn"
 		if len(toolUses) > 0 {
@@ -1352,7 +1408,7 @@ func (h *Handler) handleClaudeStream(w http.ResponseWriter, payload *KiroPayload
 		return
 	}
 
-	h.recordFailureWithDetails("claude", model, "", lastErr)
+	h.recordFailureWithDetailsMeta("claude", model, "", lastErr, clientIP, apiKeyID)
 	h.sendClaudeError(w, 500, "api_error", lastErr.Error())
 }
 
@@ -1426,6 +1482,10 @@ func (h *Handler) recordSuccessForApiKey(apiKeyID string, inputTokens, outputTok
 
 // recordFailureWithDetails records a failure and stores it in the request logs.
 func (h *Handler) recordFailureWithDetails(endpoint, model, accountID string, err error) {
+	h.recordFailureWithDetailsMeta(endpoint, model, accountID, err, "", "")
+}
+
+func (h *Handler) recordFailureWithDetailsMeta(endpoint, model, accountID string, err error, clientIP, apiKeyID string) {
 	atomic.AddInt64(&h.totalRequests, 1)
 	atomic.AddInt64(&h.failedRequests, 1)
 
@@ -1444,6 +1504,8 @@ func (h *Handler) recordFailureWithDetails(endpoint, model, accountID string, er
 		Status:    "error",
 		Error:     errMsg,
 		ErrorType: errType,
+		ClientIP:  clientIP,
+		ApiKeyID:  apiKeyID,
 	}
 
 	h.appendRequestLog(entry)
@@ -1451,6 +1513,10 @@ func (h *Handler) recordFailureWithDetails(endpoint, model, accountID string, er
 
 // recordSuccessLog records a successful request in the request logs.
 func (h *Handler) recordSuccessLog(endpoint, model, accountID string, tokens int, credits float64, durationMs int64) {
+	h.recordSuccessLogMeta(endpoint, model, accountID, tokens, credits, durationMs, "", "")
+}
+
+func (h *Handler) recordSuccessLogMeta(endpoint, model, accountID string, tokens int, credits float64, durationMs int64, clientIP, apiKeyID string) {
 	entry := RequestLog{
 		Time:      time.Now().Unix(),
 		Endpoint:  endpoint,
@@ -1460,6 +1526,8 @@ func (h *Handler) recordSuccessLog(endpoint, model, accountID string, tokens int
 		Tokens:    tokens,
 		Credits:   credits,
 		Duration:  durationMs,
+		ClientIP:  clientIP,
+		ApiKeyID:  apiKeyID,
 	}
 
 	h.appendRequestLog(entry)
@@ -1510,7 +1578,7 @@ func (h *Handler) getRequestLogs() []RequestLog {
 }
 
 // handleClaudeNonStream Claude 非流式响应
-func (h *Handler) handleClaudeNonStream(w http.ResponseWriter, payload *KiroPayload, model string, thinking bool, thinkingOpts claudeThinkingResponseOptions, estimatedInputTokens int, cacheProfile *promptCacheProfile, apiKeyID string) {
+func (h *Handler) handleClaudeNonStream(w http.ResponseWriter, payload *KiroPayload, model string, thinking bool, thinkingOpts claudeThinkingResponseOptions, estimatedInputTokens int, cacheProfile *promptCacheProfile, apiKeyID, clientIP string) {
 	excluded := make(map[string]bool)
 	var lastErr error
 	reqStart := time.Now()
@@ -1587,7 +1655,7 @@ func (h *Handler) handleClaudeNonStream(w http.ResponseWriter, payload *KiroPayl
 		h.pool.RecordSuccess(account.ID)
 		h.pool.UpdateStats(account.ID, inputTokens+outputTokens, credits)
 		h.promptCache.Update(account.ID, cacheProfile)
-		h.recordSuccessLog("claude", model, account.ID, inputTokens+outputTokens, credits, time.Since(reqStart).Milliseconds())
+		h.recordSuccessLogMeta("claude", model, account.ID, inputTokens+outputTokens, credits, time.Since(reqStart).Milliseconds(), clientIP, apiKeyID)
 
 		responseThinkingContent := rawThinkingContent
 		includeEmptyThinkingBlock := thinking && thinkingOpts.OmitDisplay && rawThinkingContent != ""
@@ -1627,7 +1695,7 @@ func (h *Handler) handleClaudeNonStream(w http.ResponseWriter, payload *KiroPayl
 		return
 	}
 
-	h.recordFailureWithDetails("claude", model, "", lastErr)
+	h.recordFailureWithDetailsMeta("claude", model, "", lastErr, clientIP, apiKeyID)
 	h.sendClaudeError(w, 500, "api_error", lastErr.Error())
 }
 
@@ -1675,10 +1743,11 @@ func (h *Handler) handleOpenAIChat(w http.ResponseWriter, r *http.Request) {
 	kiroPayload := OpenAIToKiro(&req, thinking)
 
 	apiKeyID := apiKeyIDFromContext(r.Context())
+	clientIP := clientIPFromContext(r.Context())
 	if req.Stream {
-		h.handleOpenAIStream(w, kiroPayload, req.Model, thinking, estimatedInputTokens, apiKeyID)
+		h.handleOpenAIStream(w, kiroPayload, req.Model, thinking, estimatedInputTokens, apiKeyID, clientIP)
 	} else {
-		h.handleOpenAINonStream(w, kiroPayload, req.Model, thinking, estimatedInputTokens, apiKeyID)
+		h.handleOpenAINonStream(w, kiroPayload, req.Model, thinking, estimatedInputTokens, apiKeyID, clientIP)
 	}
 }
 
@@ -1757,7 +1826,7 @@ func (h *Handler) handleImageGenerations(w http.ResponseWriter, r *http.Request)
 }
 
 // handleOpenAIStream OpenAI 流式响应
-func (h *Handler) handleOpenAIStream(w http.ResponseWriter, payload *KiroPayload, model string, thinking bool, estimatedInputTokens int, apiKeyID string) {
+func (h *Handler) handleOpenAIStream(w http.ResponseWriter, payload *KiroPayload, model string, thinking bool, estimatedInputTokens int, apiKeyID, clientIP string) {
 	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -2077,7 +2146,7 @@ func (h *Handler) handleOpenAIStream(w http.ResponseWriter, payload *KiroPayload
 			if !responseStarted {
 				continue
 			}
-			h.recordFailureWithDetails("openai", model, account.ID, err)
+			h.recordFailureWithDetailsMeta("openai", model, account.ID, err, clientIP, apiKeyID)
 			// Stream already started, so we cannot retry another account. Emit an
 			// error chunk and terminate the stream explicitly, otherwise the client
 			// sees the connection drop mid-response with no signal (looks like the
@@ -2132,7 +2201,7 @@ func (h *Handler) handleOpenAIStream(w http.ResponseWriter, payload *KiroPayload
 		h.recordSuccessForApiKey(apiKeyID, inputTokens, outputTokens, credits)
 		h.pool.RecordSuccess(account.ID)
 		h.pool.UpdateStats(account.ID, inputTokens+outputTokens, credits)
-		h.recordSuccessLog("openai", model, account.ID, inputTokens+outputTokens, credits, time.Since(reqStart).Milliseconds())
+		h.recordSuccessLogMeta("openai", model, account.ID, inputTokens+outputTokens, credits, time.Since(reqStart).Milliseconds(), clientIP, apiKeyID)
 
 		finishReason := "stop"
 		if len(toolCalls) > 0 {
@@ -2167,12 +2236,12 @@ func (h *Handler) handleOpenAIStream(w http.ResponseWriter, payload *KiroPayload
 		return
 	}
 
-	h.recordFailureWithDetails("openai", model, "", lastErr)
+	h.recordFailureWithDetailsMeta("openai", model, "", lastErr, clientIP, apiKeyID)
 	h.sendOpenAIError(w, 500, "server_error", lastErr.Error())
 }
 
 // handleOpenAINonStream OpenAI 非流式响应
-func (h *Handler) handleOpenAINonStream(w http.ResponseWriter, payload *KiroPayload, model string, thinking bool, estimatedInputTokens int, apiKeyID string) {
+func (h *Handler) handleOpenAINonStream(w http.ResponseWriter, payload *KiroPayload, model string, thinking bool, estimatedInputTokens int, apiKeyID, clientIP string) {
 	excluded := make(map[string]bool)
 	var lastErr error
 	reqStart := time.Now()
@@ -2237,7 +2306,7 @@ func (h *Handler) handleOpenAINonStream(w http.ResponseWriter, payload *KiroPayl
 		h.recordSuccessForApiKey(apiKeyID, inputTokens, outputTokens, credits)
 		h.pool.RecordSuccess(account.ID)
 		h.pool.UpdateStats(account.ID, inputTokens+outputTokens, credits)
-		h.recordSuccessLog("openai", model, account.ID, inputTokens+outputTokens, credits, time.Since(reqStart).Milliseconds())
+		h.recordSuccessLogMeta("openai", model, account.ID, inputTokens+outputTokens, credits, time.Since(reqStart).Milliseconds(), clientIP, apiKeyID)
 
 		thinkingFormat := config.GetThinkingConfig().OpenAIFormat
 		resp := KiroToOpenAIResponseWithReasoning(finalContent, reasoningContent, toolUses, inputTokens, outputTokens, model, thinkingFormat)
@@ -2251,7 +2320,7 @@ func (h *Handler) handleOpenAINonStream(w http.ResponseWriter, payload *KiroPayl
 		return
 	}
 
-	h.recordFailureWithDetails("openai", model, "", lastErr)
+	h.recordFailureWithDetailsMeta("openai", model, "", lastErr, clientIP, apiKeyID)
 	h.sendOpenAIError(w, 500, "server_error", lastErr.Error())
 }
 
@@ -2484,8 +2553,21 @@ func (h *Handler) handleAdminAPI(w http.ResponseWriter, r *http.Request) {
 		h.apiGetApiKey(w, r, strings.TrimPrefix(path, "/api-keys/"))
 	case strings.HasPrefix(path, "/api-keys/") && r.Method == "PUT":
 		h.apiUpdateApiKey(w, r, strings.TrimPrefix(path, "/api-keys/"))
+	case strings.HasPrefix(path, "/api-keys/") && strings.HasSuffix(path, "/ips") && r.Method == "GET":
+		id := strings.TrimSuffix(strings.TrimPrefix(path, "/api-keys/"), "/ips")
+		h.apiGetApiKeyIPs(w, r, id)
 	case strings.HasPrefix(path, "/api-keys/") && r.Method == "DELETE":
 		h.apiDeleteApiKey(w, r, strings.TrimPrefix(path, "/api-keys/"))
+	case path == "/security/blocked-ips" && r.Method == "GET":
+		h.apiListBlockedIPs(w, r)
+	case path == "/security/blocked-ips" && r.Method == "POST":
+		h.apiBlockIP(w, r)
+	case path == "/security/blocked-ips/unblock" && r.Method == "POST":
+		h.apiUnblockIP(w, r)
+	case path == "/security/settings" && r.Method == "GET":
+		h.apiGetSecuritySettings(w, r)
+	case path == "/security/settings" && r.Method == "POST":
+		h.apiUpdateSecuritySettings(w, r)
 	default:
 		w.WriteHeader(404)
 		json.NewEncoder(w).Encode(map[string]string{"error": "Not Found"})

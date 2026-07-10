@@ -23,6 +23,7 @@ type apiKeyView struct {
 	RequestsCount int64   `json:"requestsCount"`
 	ExpiresAt     int64   `json:"expiresAt,omitempty"`
 	Expired       bool    `json:"expired"`
+	UniqueIPs     int     `json:"uniqueIps,omitempty"`
 }
 
 func toApiKeyView(e config.ApiKeyEntry) apiKeyView {
@@ -46,9 +47,15 @@ func toApiKeyView(e config.ApiKeyEntry) apiKeyView {
 
 func (h *Handler) apiListApiKeys(w http.ResponseWriter, r *http.Request) {
 	entries := config.ListApiKeys()
+	counts := map[string]int{}
+	if h != nil && h.ipTrack != nil {
+		counts = h.ipTrack.uniqueCounts()
+	}
 	out := make([]apiKeyView, len(entries))
 	for i, e := range entries {
-		out[i] = toApiKeyView(e)
+		v := toApiKeyView(e)
+		v.UniqueIPs = counts[e.ID]
+		out[i] = v
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"apiKeys": out})
 }

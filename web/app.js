@@ -283,6 +283,8 @@ import {
     renderAccounts();
     renderPromptRules();
     renderLogs(state.logsCache);
+    state.overviewApiKeyStatsFp = '';
+    renderOverviewApiKeyStats(true);
   }
   function toggleLang() {
     const idx = LANGS.indexOf(state.currentLang);
@@ -371,6 +373,8 @@ import {
       '<th>' + escapeHtml(t('logs.endpoint')) + '</th>' +
       '<th>' + escapeHtml(t('logs.model')) + '</th>' +
       '<th>' + escapeHtml(t('logs.account')) + '</th>' +
+      '<th>' + escapeHtml(t('logs.ip') || 'IP') + '</th>' +
+      '<th>' + escapeHtml(t('logs.apiKey') || 'API Key') + '</th>' +
       '<th>' + escapeHtml(t('logs.tokens')) + '</th>' +
       '<th>' + escapeHtml(t('logs.duration')) + '</th>' +
       '<th>' + escapeHtml(t('logs.detail')) + '</th>' +
@@ -387,12 +391,19 @@ import {
       } else {
         detailCell = '<span class="text-muted">' + (l.credits ? (l.credits.toFixed(3) + ' cr') : '-') + '</span>';
       }
+      const keyLabel = (function () {
+        if (!l.apiKeyId) return '-';
+        const k = (state.apiKeysCache || []).find(x => x && x.id === l.apiKeyId);
+        return k && k.name ? k.name : String(l.apiKeyId).slice(0, 8);
+      })();
       html += '<tr>' +
         '<td>' + escapeHtml(formatLogTime(l.time)) + '</td>' +
         '<td>' + statusCell + '</td>' +
         '<td>' + escapeHtml(l.endpoint) + '</td>' +
         '<td>' + escapeHtml(l.model || '-') + '</td>' +
         '<td>' + escapeHtml(accountLabel(l.accountId)) + '</td>' +
+        '<td>' + escapeHtml(l.clientIp || '-') + '</td>' +
+        '<td>' + escapeHtml(keyLabel) + '</td>' +
         '<td>' + (l.tokens ? formatNum(l.tokens) : '-') + '</td>' +
         '<td>' + (l.duration ? (l.duration + 'ms') : '-') + '</td>' +
         '<td>' + detailCell + '</td>' +
@@ -422,7 +433,7 @@ import {
   // Settings
 import {
   loadSettings, saveThinkingConfig, saveEndpointConfig, onProxyTypeChange, saveProxyConfig, saveRequireApiKey,
-  saveOverUsageConfig, changePassword, resetStats, renderApiKeys, bindApiKeyEvents, savePromptFilter,
+  saveOverUsageConfig, changePassword, resetStats, renderApiKeys, renderOverviewApiKeyStats, bindApiKeyEvents, savePromptFilter,
   renderPromptRules, addPromptRule,
 } from './js/settings.js';
 
@@ -603,6 +614,7 @@ import {
     if (view === 'logs') loadLogs();
     if (view === 'usage') renderUsageView();
     if (view === 'apikeys') renderApiKeys();
+    if (view === 'overview') renderOverviewApiKeyStats(true);
 
     // Provider bucket: show supported models panel + load catalog.
     // All Accounts / other views: hide it.
@@ -773,6 +785,8 @@ import {
     });
     const backBtn = $('backToProvidersBtn');
     if (backBtn) backBtn.addEventListener('click', () => switchView('providers'));
+    const manageKeysBtn = $('overviewManageKeysBtn');
+    if (manageKeysBtn) manageKeysBtn.addEventListener('click', () => switchView('apikeys'));
 
     // Provider models panel: copy + search (list is dynamic).
     const providerModelsList = $('providerModelsList');
