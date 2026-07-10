@@ -426,8 +426,8 @@ func RefreshAccountInfo(account *config.Account) (*config.AccountInfo, error) {
 		return refreshGrokInfo(account, info)
 	}
 
-	// Codex (OpenAI ChatGPT) accounts have no Kiro getUsageLimits endpoint. Their
-	// plan is decoded from the id_token (chatgpt_plan_type); no network call.
+	// Codex (OpenAI ChatGPT) accounts have no Kiro getUsageLimits endpoint. Plan
+	// comes from WHAM (preferred) or id_token chatgpt_plan_type; usage windows from WHAM.
 	if isCodexAccount(account) {
 		return refreshCodexInfo(account, info)
 	}
@@ -667,10 +667,27 @@ func grokTierToTitle(tier int) string {
 // is read from the stored plan type or decoded from the id_token. Usage/trial
 // fields are left empty so the panel hides the quota bar.
 func refreshCodexInfo(account *config.Account, info *config.AccountInfo) (*config.AccountInfo, error) {
+	// Plan from stored claim / id_token first (always available offline).
 	plan := strings.TrimSpace(account.CodexPlanType)
 	if plan == "" {
 		_, _, plan = auth.DecodeCodexIDToken(account.CodexIDToken)
 	}
+
+	// Live WHAM usage: session/weekly/review windows + reset credits.
+	// Soft-fail so a temporary WHAM outage still updates the plan badge.
+	if snap, err := FetchCodexUsage(account); err != nil {
+		logger.Warnf("[Codex] usage fetch failed for %s: %v", account.Email, err)
+	} else if snap != nil {
+		info.CodexQuotaFetched = true
+		info.CodexQuota = snap.Windows
+		info.CodexLimitReached = snap.LimitReached
+		info.CodexResetCredits = snap.ResetCredits
+		if strings.TrimSpace(snap.Plan) != "" {
+			plan = strings.TrimSpace(snap.Plan)
+		}
+	}
+
+	info.CodexPlanType = plan
 	info.SubscriptionType = codexPlanToSubscription(plan)
 	info.SubscriptionTitle = codexPlanToTitle(plan)
 	return info, nil

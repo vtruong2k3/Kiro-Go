@@ -38,7 +38,7 @@ Base URL trong các ví dụ: `http://localhost:8080`.
 | `expiresAt`     | int64   | Unix giây, thời điểm hết hạn (0 = vĩnh viễn)                  |
 | `expired`       | bool    | `true` khi `expiresAt > 0 && now >= expiresAt`               |
 
-> **Key thật (`sk-...`) chỉ trả về đúng một lần khi tạo** (`POST`). Sau đó chỉ đọc được `keyMasked`. Tool phải lưu lại key ngay tại bước tạo.
+> **Key thật (`sk-...`) được trả về khi tạo** (`POST`). List/get chỉ có `keyMasked`. Có thể lấy lại cleartext qua `GET /admin/api/api-keys/{id}/reveal` (cần admin password).
 
 ### Ngữ nghĩa `expiresAt`
 
@@ -81,6 +81,26 @@ Response `200`:
   ]
 }
 ```
+
+
+### 1b. Hiện cleartext key — `GET /admin/api/api-keys/{id}/reveal`
+
+Dùng khi admin cần copy lại key đã tạo (list/get chỉ trả `keyMasked`).
+
+```bash
+curl http://localhost:8080/admin/api/api-keys/$ID/reveal   -H "X-Admin-Password: $ADMIN_PW"
+```
+
+Response `200`:
+```json
+{
+  "success": true,
+  "id": "b3f1...",
+  "key": "sk-...."
+}
+```
+
+`404` nếu id không tồn tại. Endpoint này chỉ dành cho admin đã xác thực; không dùng cho client `/v1/*`.
 
 ### 2. Tạo key — `POST /admin/api/api-keys`
 

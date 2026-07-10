@@ -235,6 +235,24 @@
             </div>
           </div>
 
+          <div id="providerModelsPanel" class="provider-models-panel hidden">
+            <details class="provider-models-details" open>
+              <summary class="provider-models-summary">
+                <span class="provider-models-title">
+                  <i class="fa-solid fa-layer-group" aria-hidden="true"></i>
+                  <span data-i18n="providers.supportedModels">Supported Models</span>
+                </span>
+                <span class="provider-models-count" id="providerModelsCount"></span>
+                <i class="fa-solid fa-chevron-down provider-models-chevron" aria-hidden="true"></i>
+              </summary>
+              <p class="provider-models-hint" data-i18n="providers.modelsHint">Copy a model ID to use with API requests.</p>
+              <div class="provider-models-toolbar">
+                <input type="text" id="providerModelsSearch" class="provider-models-search" data-i18n-placeholder="providers.searchModels" placeholder="Search models…" />
+              </div>
+              <div id="providerModelsList" class="provider-models-list"></div>
+            </details>
+          </div>
+
           <div class="toolbar">
             <label class="flex items-center gap-1.5 cursor-pointer select-none shrink-0">
               <input type="checkbox" id="selectAllCheckbox" />

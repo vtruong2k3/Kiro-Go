@@ -2368,6 +2368,12 @@ func (h *Handler) handleAdminAPI(w http.ResponseWriter, r *http.Request) {
 		id := strings.TrimSuffix(strings.TrimPrefix(path, "/accounts/"), "/models")
 		h.apiGetAccountModels(w, r, id)
 
+	// Provider catalog for admin UI: GET /providers/{provider}/models
+	case strings.HasPrefix(path, "/providers/") && strings.HasSuffix(path, "/models") && r.Method == "GET":
+		rest := strings.TrimSuffix(strings.TrimPrefix(path, "/providers/"), "/models")
+		provider := strings.Trim(rest, "/")
+		h.apiGetProviderModels(w, r, provider)
+
 	case strings.HasPrefix(path, "/accounts/") && strings.HasSuffix(path, "/overage") && r.Method == "POST":
 		id := strings.TrimSuffix(strings.TrimPrefix(path, "/accounts/"), "/overage")
 		h.apiSetAccountOverage(w, r, id)
@@ -2471,6 +2477,9 @@ func (h *Handler) handleAdminAPI(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(path, "/api-keys/") && strings.HasSuffix(path, "/reset-usage") && r.Method == "POST":
 		id := strings.TrimSuffix(strings.TrimPrefix(path, "/api-keys/"), "/reset-usage")
 		h.apiResetApiKeyUsage(w, r, id)
+	case strings.HasPrefix(path, "/api-keys/") && strings.HasSuffix(path, "/reveal") && r.Method == "GET":
+		id := strings.TrimSuffix(strings.TrimPrefix(path, "/api-keys/"), "/reveal")
+		h.apiRevealApiKey(w, r, id)
 	case strings.HasPrefix(path, "/api-keys/") && r.Method == "GET":
 		h.apiGetApiKey(w, r, strings.TrimPrefix(path, "/api-keys/"))
 	case strings.HasPrefix(path, "/api-keys/") && r.Method == "PUT":
@@ -2539,6 +2548,13 @@ func (h *Handler) apiGetAccounts(w http.ResponseWriter, r *http.Request) {
 			"agTier":            a.AGTier,
 			"agTierName":        a.AGTierName,
 			"agQuota":           a.AGQuota,
+			"grokAuthType":      a.GrokAuthType,
+			"codexAuthType":     a.CodexAuthType,
+			"codexPlanType":     a.CodexPlanType,
+			"codexAccountId":    a.CodexAccountID,
+			"codexQuota":        a.CodexQuota,
+			"codexLimitReached": a.CodexLimitReached,
+			"codexResetCredits": a.CodexResetCredits,
 			"requestCount":      stats.RequestCount,
 			"errorCount":        stats.ErrorCount,
 			"totalTokens":       stats.TotalTokens,
@@ -4257,6 +4273,13 @@ func (h *Handler) apiGetAccountFull(w http.ResponseWriter, r *http.Request, id s
 		"agTier":            account.AGTier,
 		"agTierName":        account.AGTierName,
 		"agQuota":           account.AGQuota,
+		"grokAuthType":      account.GrokAuthType,
+		"codexAuthType":     account.CodexAuthType,
+		"codexPlanType":     account.CodexPlanType,
+		"codexAccountId":    account.CodexAccountID,
+		"codexQuota":        account.CodexQuota,
+		"codexLimitReached": account.CodexLimitReached,
+		"codexResetCredits": account.CodexResetCredits,
 		"requestCount":      stats.RequestCount,
 		"errorCount":        stats.ErrorCount,
 		"totalTokens":       stats.TotalTokens,
@@ -4327,6 +4350,145 @@ func (h *Handler) apiGetAccountModelsCached(w http.ResponseWriter, r *http.Reque
 		"success": true,
 		"models":  models,
 	})
+}
+
+// apiGetProviderModels GET /admin/api/providers/{provider}/models
+// Returns the model catalog a provider bucket supports so the admin UI can
+// show a copyable list when drilling into Grok/Kiro/Codex/Antigravity.
+func (h *Handler) apiGetProviderModels(w http.ResponseWriter, r *http.Request, provider string) {
+	key := strings.ToLower(strings.TrimSpace(provider))
+	var (
+		infos  []ModelInfo
+		source string
+	)
+
+	switch key {
+	case "grok", "xai":
+		infos = grokModelInfos()
+		source = "static"
+		key = "grok"
+	case "codex":
+		infos = codexModelInfos()
+		source = "static"
+	case "antigravity":
+		infos = antigravityModelInfos()
+		source = "static"
+	case "kiro", "":
+		infos, source = h.kiroProviderModelInfos()
+		key = "kiro"
+	default:
+		w.WriteHeader(400)
+		json.NewEncoder(w).Encode(map[string]string{"error": "unknown provider: " + provider})
+		return
+	}
+
+	thinkingSuffix := config.GetThinkingConfig().Suffix
+	if thinkingSuffix == "" {
+		thinkingSuffix = "-thinking"
+	}
+
+	models := make([]map[string]interface{}, 0, len(infos)*2)
+	seen := make(map[string]bool, len(infos)*2)
+	appendItem := func(id, name, desc string, supportsImage bool) {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return
+		}
+		lk := strings.ToLower(id)
+		if seen[lk] {
+			return
+		}
+		seen[lk] = true
+		models = append(models, map[string]interface{}{
+			"id":             id,
+			"name":           name,
+			"description":    desc,
+			"supports_image": supportsImage,
+		})
+	}
+
+	for _, m := range infos {
+		supportsImage := modelSupportsImage(m.InputTypes)
+		name := m.ModelName
+		if name == "" {
+			name = m.ModelId
+		}
+		appendItem(m.ModelId, name, m.Description, supportsImage)
+		// Kiro also exposes thinking dual-IDs like /v1/models.
+		if key == "kiro" && thinkingSuffix != "" && !strings.HasSuffix(m.ModelId, thinkingSuffix) {
+			appendItem(m.ModelId+thinkingSuffix, name+" (thinking)", m.Description, supportsImage)
+		}
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":  true,
+		"provider": key,
+		"source":   source,
+		"models":   models,
+	})
+}
+
+// kiroProviderModelInfos returns Kiro/AWS-backed models from the aggregated
+// cache (excluding static Grok/Codex/Antigravity catalogs). Falls back to the
+// built-in Claude list when the cache is empty.
+func (h *Handler) kiroProviderModelInfos() ([]ModelInfo, string) {
+	exclude := make(map[string]bool)
+	for _, id := range grokModelIDs() {
+		exclude[strings.ToLower(id)] = true
+	}
+	for _, id := range codexModelIDs() {
+		exclude[strings.ToLower(id)] = true
+	}
+	for _, id := range antigravityModelIDs() {
+		exclude[strings.ToLower(id)] = true
+	}
+
+	h.modelsCacheMu.RLock()
+	cached := h.cachedModels
+	h.modelsCacheMu.RUnlock()
+	if len(cached) == 0 {
+		h.refreshModelsCache()
+		h.modelsCacheMu.RLock()
+		cached = h.cachedModels
+		h.modelsCacheMu.RUnlock()
+	}
+
+	out := make([]ModelInfo, 0, len(cached))
+	for _, m := range cached {
+		id := strings.ToLower(strings.TrimSpace(m.ModelId))
+		if id == "" || exclude[id] {
+			continue
+		}
+		// Proxy aliases are not Kiro catalog entries.
+		if id == "auto" || id == "gpt-4o" || id == "gpt-4" {
+			continue
+		}
+		out = append(out, m)
+	}
+	if len(out) > 0 {
+		return out, "cache"
+	}
+
+	// Static safety-net when no Kiro account has populated the cache yet.
+	fallbackIDs := []string{
+		"claude-sonnet-4.6",
+		"claude-opus-4.6",
+		"claude-opus-4.7",
+		"claude-sonnet-4.5",
+		"claude-sonnet-4",
+		"claude-haiku-4.5",
+		"claude-opus-4.5",
+	}
+	fallback := make([]ModelInfo, 0, len(fallbackIDs))
+	for _, id := range fallbackIDs {
+		fallback = append(fallback, ModelInfo{
+			ModelId:     id,
+			ModelName:   id,
+			Description: "AWS Kiro / CodeWhisperer",
+			InputTypes:  []string{"text", "image"},
+		})
+	}
+	return fallback, "fallback"
 }
 
 // ==================== 静态文件服务 ====================

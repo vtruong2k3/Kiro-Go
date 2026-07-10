@@ -220,7 +220,13 @@ export function renderApiKeys() {
   const html = state.apiKeysCache.map(item => {
     const id = escapeAttr(item.id || '');
     const name = item.name ? escapeHtml(item.name) : '<span class="muted-text">' + escapeHtml(t('apiKeys.unnamed')) + '</span>';
-    const masked = escapeHtml(item.keyMasked || '');
+    const rawId = item.id || '';
+    const revealed = !!(state.apiKeyRevealed && state.apiKeyRevealed[rawId]);
+    const plain = (state.apiKeyRevealCache && state.apiKeyRevealCache[rawId]) || '';
+    const displayKey = revealed && plain ? plain : (item.keyMasked || '');
+    const keyText = escapeHtml(displayKey);
+    const eyeIcon = revealed ? 'fa-eye-slash' : 'fa-eye';
+    const eyeLabel = revealed ? t('apiKeys.hideKey') : t('apiKeys.showKey');
     const migrated = item.migrated
       ? '<span class="text-xs" style="background:rgba(59,130,246,0.15);color:#3b82f6;padding:1px 6px;border-radius:4px;">' + escapeHtml(t('apiKeys.migrated')) + '</span>'
       : '';
@@ -239,12 +245,16 @@ export function renderApiKeys() {
     const expiryLine = '<div class="text-xs muted-text">' + escapeHtml(t('apiKeys.expiry')) + ': ' + escapeHtml(expiryText) + '</div>';
     return '<div class="card" data-apikey-id="' + id + '" style="margin-top:0.5rem;padding:0.75rem;">' +
       '<div class="flex items-center gap-2" style="flex-wrap:wrap;justify-content:space-between;">' +
-        '<div class="flex items-center gap-2" style="flex-wrap:wrap;">' +
+        '<div class="flex items-center gap-2" style="flex-wrap:wrap;min-width:0;">' +
           '<span class="font-semibold">' + name + '</span>' +
           migrated +
           disabled +
           expired +
-          '<span class="text-xs muted-text font-mono">' + masked + '</span>' +
+          '<span class="api-key-value text-xs muted-text font-mono" data-apikey-value="' + id + '" title="' + escapeAttr(displayKey) + '">' + keyText + '</span>' +
+          '<button class="btn btn-icon btn-sm btn-ghost api-key-icon-btn" type="button" data-apikey-action="toggleReveal" data-id="' + id + '" title="' + escapeAttr(eyeLabel) + '" aria-label="' + escapeAttr(eyeLabel) + '">' +
+            '<i class="fa-regular ' + eyeIcon + '" aria-hidden="true"></i></button>' +
+          '<button class="btn btn-icon btn-sm btn-ghost api-key-icon-btn" type="button" data-apikey-action="copy" data-id="' + id + '" title="' + escapeAttr(t('apiKeys.copyKey')) + '" aria-label="' + escapeAttr(t('apiKeys.copyKey')) + '">' +
+            '<i class="fa-regular fa-copy" aria-hidden="true"></i></button>' +
         '</div>' +
         '<div class="flex items-center gap-2">' +
           '<label class="switch" title="' + escapeAttr(item.enabled ? t('accounts.disable') : t('accounts.enable')) + '">' +
@@ -391,6 +401,8 @@ export async function deleteApiKeyEntry(id, name) {
     const d = await res.json().catch(() => ({}));
     if (!res.ok || d.success === false) throw new Error(d.error || t('common.failed'));
     toast(t('apiKeys.deleteSuccess'), 'success');
+    if (state.apiKeyRevealCache) delete state.apiKeyRevealCache[id];
+    if (state.apiKeyRevealed) delete state.apiKeyRevealed[id];
     await loadApiKeys();
   } catch (e) {
     toast((e && e.message) || t('common.failed'), 'error');
@@ -411,6 +423,55 @@ export async function resetApiKeyUsageEntry(id, name) {
     await loadApiKeys();
   } catch (e) {
     toast((e && e.message) || t('common.failed'), 'error');
+  }
+}
+
+
+export async function fetchApiKeyPlaintext(id) {
+  if (!id) throw new Error(t('apiKeys.revealFailed'));
+  if (state.apiKeyRevealCache && state.apiKeyRevealCache[id]) {
+    return state.apiKeyRevealCache[id];
+  }
+  const res = await api('/api-keys/' + encodeURIComponent(id) + '/reveal');
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok || d.success === false || !d.key) {
+    throw new Error(d.error || t('apiKeys.revealFailed'));
+  }
+  if (!state.apiKeyRevealCache) state.apiKeyRevealCache = {};
+  state.apiKeyRevealCache[id] = d.key;
+  return d.key;
+}
+
+export async function toggleApiKeyReveal(id) {
+  if (!id) return;
+  if (!state.apiKeyRevealed) state.apiKeyRevealed = {};
+  try {
+    if (state.apiKeyRevealed[id]) {
+      state.apiKeyRevealed[id] = false;
+      renderApiKeys();
+      return;
+    }
+    await fetchApiKeyPlaintext(id);
+    state.apiKeyRevealed[id] = true;
+    renderApiKeys();
+  } catch (e) {
+    toast((e && e.message) || t('apiKeys.revealFailed'), 'error');
+  }
+}
+
+export async function copyApiKeyValue(id, btn) {
+  if (!id) return;
+  try {
+    const key = await fetchApiKeyPlaintext(id);
+    await copyText(key);
+    toast(t('apiKeys.copySuccess'), 'success');
+    if (btn) {
+      const html = btn.innerHTML;
+      btn.innerHTML = '<i class="fa-solid fa-check" aria-hidden="true"></i>';
+      setTimeout(() => { btn.innerHTML = html; }, 800);
+    }
+  } catch (e) {
+    toast((e && e.message) || t('apiKeys.revealFailed'), 'error');
   }
 }
 
@@ -453,6 +514,8 @@ export function bindApiKeyEvents() {
       if (action === 'edit') openApiKeyModal(entry);
       else if (action === 'delete') deleteApiKeyEntry(id, name);
       else if (action === 'reset') resetApiKeyUsageEntry(id, name);
+      else if (action === 'toggleReveal') toggleApiKeyReveal(id);
+      else if (action === 'copy') copyApiKeyValue(id, btn);
     });
     list.addEventListener('change', e => {
       const cb = e.target.closest('input[data-apikey-action="toggle"]');

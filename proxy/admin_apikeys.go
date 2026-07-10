@@ -200,3 +200,21 @@ func (h *Handler) apiResetApiKeyUsage(w http.ResponseWriter, r *http.Request, id
 		"apiKey":  toApiKeyView(*updated),
 	})
 }
+
+// apiRevealApiKey returns the plaintext API key for an admin who needs to
+// re-copy an existing secret. List/get stay masked; only this endpoint exposes
+// the cleartext value (storage already keeps keys in plaintext in config.json).
+func (h *Handler) apiRevealApiKey(w http.ResponseWriter, r *http.Request, id string) {
+	entry := config.GetApiKeyEntry(id)
+	if entry == nil {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "API key not found"})
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"id":      entry.ID,
+		"key":     entry.Key,
+	})
+}
+

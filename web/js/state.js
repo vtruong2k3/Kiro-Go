@@ -62,6 +62,8 @@ export const state = {
   logsFilter: 'all',
   logsAutoTimer: null,
   logsCache: [],
+  apiKeyRevealCache: {},
+  apiKeyRevealed: {},
   apiKeysCache: [],
   apiKeyEditingId: '',
   apiKeyModalSubmitting: false,

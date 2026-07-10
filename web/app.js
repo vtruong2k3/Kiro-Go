@@ -26,6 +26,121 @@ import {
   toggleSelectAccount, toggleSelectAll,
 } from './js/accounts.js';
 
+  // ── Provider models panel (inside provider bucket accounts view) ──
+  let providerModelsCache = { provider: '', models: [] };
+
+  function hideProviderModelsPanel() {
+    const panel = $('providerModelsPanel');
+    if (panel) panel.classList.add('hidden');
+    const list = $('providerModelsList');
+    if (list) list.innerHTML = '';
+    const count = $('providerModelsCount');
+    if (count) count.textContent = '';
+    const search = $('providerModelsSearch');
+    if (search) search.value = '';
+    providerModelsCache = { provider: '', models: [] };
+  }
+
+  function showProviderModelsPanel() {
+    const panel = $('providerModelsPanel');
+    if (panel) panel.classList.remove('hidden');
+  }
+
+  async function loadProviderModels(provider) {
+    showProviderModelsPanel();
+    const list = $('providerModelsList');
+    const count = $('providerModelsCount');
+    if (list) list.innerHTML = loaderHtml(t('api.loading'));
+    if (count) count.textContent = '';
+    try {
+      const res = await api('/providers/' + encodeURIComponent(provider) + '/models');
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok || d.success === false) {
+        throw new Error(d.error || t('providers.modelsLoadFailed'));
+      }
+      const models = Array.isArray(d.models) ? d.models : [];
+      providerModelsCache = { provider, models };
+      renderProviderModels(models);
+    } catch (e) {
+      providerModelsCache = { provider, models: [] };
+      if (list) {
+        list.innerHTML = '<div class="provider-models-error"><i class="fa-solid fa-circle-exclamation"></i> ' +
+          escapeHtml((e && e.message) || t('providers.modelsLoadFailed')) + '</div>';
+      }
+      if (count) count.textContent = '';
+    }
+  }
+
+  function renderProviderModels(models) {
+    const list = $('providerModelsList');
+    const count = $('providerModelsCount');
+    if (!list) return;
+    if (count) count.textContent = t('providers.modelsCount', models.length);
+    if (!models.length) {
+      list.innerHTML = '<div class="provider-models-empty">' + escapeHtml(t('providers.noModels')) + '</div>';
+      return;
+    }
+    const thinkingSuffix = '-thinking';
+    list.innerHTML = models.map(m => {
+      const id = m.id || m.modelId || '';
+      const name = m.name || m.modelName || '';
+      const isThinking = id.endsWith(thinkingSuffix) || /thinking/i.test(id);
+      const supportsImage = !!(m.supports_image || m.supportsImage);
+      let badges = '';
+      if (isThinking) badges += '<span class="model-badge model-badge--thinking"><i class="fa-solid fa-brain"></i> thinking</span>';
+      if (supportsImage) badges += '<span class="model-badge model-badge--image"><i class="fa-solid fa-image"></i> vision</span>';
+      const nameHtml = (name && name !== id)
+        ? '<div class="provider-model-name">' + escapeHtml(name) + '</div>'
+        : '';
+      return '<div class="provider-model-row" data-model-id="' + escapeAttr(id) + '">' +
+        '<div class="provider-model-main">' +
+        '<div class="provider-model-id" title="' + escapeAttr(id) + '">' + escapeHtml(id) + '</div>' +
+        nameHtml +
+        (badges ? '<div class="provider-model-badges">' + badges + '</div>' : '') +
+        '</div>' +
+        '<button type="button" class="provider-model-copy" data-copy-model="' + escapeAttr(id) + '" title="' +
+        escapeAttr(t('providers.copyModel')) + '" aria-label="' + escapeAttr(t('providers.copyModel')) + '">' +
+        '<i class="fa-regular fa-copy" aria-hidden="true"></i></button>' +
+        '</div>';
+    }).join('');
+  }
+
+  function filterProviderModels(kw) {
+    const models = providerModelsCache.models || [];
+    const q = (kw || '').toLowerCase().trim();
+    if (!q) {
+      renderProviderModels(models);
+      return;
+    }
+    const filtered = models.filter(m => {
+      const id = (m.id || m.modelId || '').toLowerCase();
+      const name = (m.name || m.modelName || '').toLowerCase();
+      const desc = (m.description || '').toLowerCase();
+      return id.includes(q) || name.includes(q) || desc.includes(q);
+    });
+    renderProviderModels(filtered);
+  }
+
+  async function copyProviderModelId(id, btn) {
+    if (!id) return;
+    try {
+      await copyText(id);
+      toast(t('common.copied'), 'primary');
+      if (btn) {
+        const html = btn.innerHTML;
+        const cls = btn.className;
+        btn.classList.add('copied');
+        btn.innerHTML = '<i class="fa-solid fa-check" aria-hidden="true"></i>';
+        setTimeout(() => {
+          btn.className = cls;
+          btn.innerHTML = html;
+        }, 800);
+      }
+    } catch (e) {
+      toast(t('common.failed'), 'error');
+    }
+  }
+
   // Login
   function clearActivePassword() {
     sessionStorage.removeItem('admin_password');
@@ -433,6 +548,15 @@ import {
     if (view === 'logs') loadLogs();
     if (view === 'usage') renderUsageView();
     if (view === 'apikeys') renderApiKeys();
+
+    // Provider bucket: show supported models panel + load catalog.
+    // All Accounts / other views: hide it.
+    if (isProvider && providerKey) {
+      loadProviderModels(providerKey);
+    } else {
+      hideProviderModelsPanel();
+    }
+
     closeSidebar();
   }
 
@@ -585,6 +709,22 @@ import {
     });
     const backBtn = $('backToProvidersBtn');
     if (backBtn) backBtn.addEventListener('click', () => switchView('providers'));
+
+    // Provider models panel: copy + search (list is dynamic).
+    const providerModelsList = $('providerModelsList');
+    if (providerModelsList) {
+      providerModelsList.addEventListener('click', e => {
+        const btn = e.target.closest('[data-copy-model]');
+        if (!btn) return;
+        copyProviderModelId(btn.dataset.copyModel, btn);
+      });
+    }
+    const providerModelsSearch = $('providerModelsSearch');
+    if (providerModelsSearch) {
+      providerModelsSearch.addEventListener('input', () => {
+        filterProviderModels(providerModelsSearch.value);
+      });
+    }
 
     const sbToggle = $('sidebarToggle');
     if (sbToggle) sbToggle.addEventListener('click', openSidebar);

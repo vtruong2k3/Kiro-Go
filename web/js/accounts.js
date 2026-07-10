@@ -269,6 +269,7 @@ export function renderGrokDetailSection(a, idAttr) {
     detailItem(t('grok.authType') || 'Auth Type', typeLabel) +
     credsHtml +
     '</div>' +
+    renderGrokUsageHint(a) +
     '<p class="help-block" style="margin-top:6px;font-size:12px;">' + escapeHtml(t('grok.detailHint') || 'Grok credentials are stored securely. Use the Test button to verify connectivity.') + '</p>' +
     '</div>';
 }
@@ -281,6 +282,65 @@ export function renderCodexInfo(a) {
   return '<div class="account-codex-info" style="margin: 4px 0 8px; font-size: 12px;">' +
     '<span class="badge badge-info">' + escapeHtml(label) + '</span>' +
     '</div>';
+}
+
+// renderCodexQuota shows ChatGPT WHAM session/weekly (and review) windows.
+// Used% drives bars; resetAt is shown relative when parseable (RFC3339 / unix).
+export function renderCodexQuota(a) {
+  if (!isCodexAccountDetail(a)) return '';
+  const windows = Array.isArray(a.codexQuota) ? a.codexQuota : [];
+  const limitReached = !!a.codexLimitReached;
+  const credits = a.codexResetCredits || 0;
+  if (!windows.length && !limitReached && !credits) {
+    // No WHAM data yet — still show a compact hint so users know to refresh.
+    return '<div class="codex-quota codex-quota--empty">' +
+      '<span class="codex-quota-empty-text">' + escapeHtml(t('codex.quotaEmpty')) + '</span>' +
+      '</div>';
+  }
+  const items = windows.map(w => {
+    const usedPct = Math.max(0, Math.min(100, Number(w.usedPct) || 0));
+    const remainPct = Math.max(0, 100 - usedPct);
+    const barClass = usedPct > 90 ? 'critical' : usedPct > 70 ? 'high' : '';
+    const name = w.label || w.key || '-';
+    const reset = formatAgResetTime(w.resetAt);
+    const resetLabel = reset ? ' · ' + t('codex.quotaReset', reset) : '';
+    const hit = w.limitHit ? ' · ' + t('codex.limitReached') : '';
+    const tooltip = name + ' ' + usedPct.toFixed(0) + '%' + resetLabel + hit;
+    return '' +
+      '<div class="codex-quota-item" title="' + escapeAttr(tooltip) + '">' +
+      '<div class="codex-quota-name">' + escapeHtml(name) + '</div>' +
+      '<div class="usage-bar"><div class="usage-fill ' + barClass + '" data-usage-pct="' + escapeAttr(usedPct) + '"></div></div>' +
+      '<div class="codex-quota-pct">' + usedPct.toFixed(0) + '%</div>' +
+      '</div>';
+  }).join('');
+  let meta = [];
+  if (limitReached) meta.push(t('codex.limitReached'));
+  if (credits > 0) meta.push(t('codex.resetCredits', credits));
+  if (windows.length) meta.push(t('codex.quotaSummary', windows.length));
+  const summary = meta.join(' · ') || t('codex.quotaTitle');
+  return '<details class="codex-quota" open>' +
+    '<summary class="codex-quota-summary">' +
+    '<span class="codex-quota-title">' + escapeHtml(t('codex.quotaTitle')) + '</span>' +
+    '<span class="codex-quota-meta">' + escapeHtml(summary) + '</span>' +
+    '<i class="fa-solid fa-chevron-down codex-quota-chevron" aria-hidden="true"></i>' +
+    '</summary>' +
+    (items ? '<div class="codex-quota-grid">' + items + '</div>' : '') +
+    '</details>';
+}
+
+// renderGrokUsageHint explains that xAI has no public remaining-quota API and
+// surfaces local proxy counters so the card is not empty of usage context.
+export function renderGrokUsageHint(a) {
+  if (!isGrokAccountDetail(a)) return '';
+  const req = a.requestCount || 0;
+  const tok = formatNum(a.totalTokens || 0);
+  const cred = (a.totalCredits || 0).toFixed(1);
+  return '<div class="grok-usage-hint">' +
+    '<div class="grok-usage-hint-title">' + escapeHtml(t('grok.usageTitle')) + '</div>' +
+    '<div class="grok-usage-hint-body">' + escapeHtml(t('grok.usageHint')) + '</div>' +
+    '<div class="grok-usage-hint-stats">' +
+    escapeHtml(t('grok.usageLocal', req, tok, cred)) +
+    '</div></div>';
 }
 
 export function isCodexAccountDetail(a) {
@@ -297,11 +357,18 @@ export function renderCodexDetailSection(a, idAttr) {
   if (a.codexPlanType) {
     extra += detailItem(t('codex.plan') || 'Plan', a.codexPlanType);
   }
+  if (a.codexResetCredits != null && a.codexResetCredits !== undefined) {
+    extra += detailItem(t('codex.resetCreditsLabel'), String(a.codexResetCredits || 0));
+  }
+  if (a.codexLimitReached) {
+    extra += detailItem(t('codex.limitReached'), t('common.yes') || 'Yes');
+  }
   return '' +
     '<div class="detail-section"><h4>' + escapeHtml(t('provider.codex') || 'OpenAI Codex') + '</h4><div class="detail-grid">' +
     detailItem(t('codex.authType') || 'Auth Type', typeLabel) +
     extra +
     '</div>' +
+    renderCodexQuota(a) +
     '<p class="help-block" style="margin-top:6px;font-size:12px;">' + escapeHtml(t('codex.detailHint') || 'Codex credentials are stored securely. Use the Test button to verify connectivity.') + '</p>' +
     '</div>';
 }
@@ -375,7 +442,9 @@ export function renderAccounts() {
         '</div>' : '') +
       renderAntigravityQuota(a) +
       renderGrokInfo(a) +
+      renderGrokUsageHint(a) +
       renderCodexInfo(a) +
+      renderCodexQuota(a) +
       '<div class="account-stats">' +
       '<div class="account-stat"><div class="account-stat-value">' + (a.requestCount || 0) + '</div><div class="account-stat-label">' + escapeHtml(t('accounts.requests')) + '</div></div>' +
       '<div class="account-stat"><div class="account-stat-value">' + formatNum(a.totalTokens || 0) + '</div><div class="account-stat-label">' + escapeHtml(t('accounts.tokens')) + '</div></div>' +

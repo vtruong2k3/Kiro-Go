@@ -96,6 +96,12 @@ type Account struct {
 	CodexPlanType  string `json:"codexPlanType,omitempty"`  // raw chatgpt_plan_type claim (free/go/plus/pro/team/business/enterprise)
 	CodexIDToken   string `json:"codexIdToken,omitempty"`   // id_token retained for account-id/plan backfill
 
+	// CodexQuota holds ChatGPT WHAM rate-limit windows (session/weekly/review).
+	// Refreshed via GET chatgpt.com/backend-api/wham/usage; empty for non-Codex.
+	CodexQuota        []CodexQuotaWindow `json:"codexQuota,omitempty"`
+	CodexLimitReached bool               `json:"codexLimitReached,omitempty"`
+	CodexResetCredits int                `json:"codexResetCredits,omitempty"` // rate_limit_reset_credits.available_count
+
 	// Per-account outbound proxy (falls back to global ProxyURL if empty)
 	ProxyURL string `json:"proxyURL,omitempty"`
 
@@ -267,6 +273,17 @@ type AGQuotaBucket struct {
 	ResetTime     string  `json:"resetTime,omitempty"`
 }
 
+// CodexQuotaWindow is one ChatGPT WHAM rate-limit window (session/weekly/review).
+// UsedPct is 0–100 (percent of the window already consumed).
+type CodexQuotaWindow struct {
+	Key       string  `json:"key"`                 // "session" | "weekly" | "review_session" | "review_weekly"
+	Label     string  `json:"label,omitempty"`     // human-readable
+	UsedPct   float64 `json:"usedPct"`             // 0–100
+	Remaining float64 `json:"remaining,omitempty"` // 100 - usedPct
+	ResetAt   string  `json:"resetAt,omitempty"`   // RFC3339 when known
+	LimitHit  bool    `json:"limitHit,omitempty"`
+}
+
 // AccountInfo contains account metadata retrieved from Kiro API.
 // Used for updating subscription and usage information.
 type AccountInfo struct {
@@ -290,6 +307,15 @@ type AccountInfo struct {
 	AGTier     string
 	AGTierName string
 	AGQuota    []AGQuotaBucket
+
+	// Codex-only fields (populated by the Codex WHAM usage refresh path).
+	CodexPlanType     string
+	CodexQuota        []CodexQuotaWindow
+	CodexLimitReached bool
+	CodexResetCredits int
+	// CodexQuotaFetched is true when WHAM was contacted successfully (even if
+	// windows are empty). Distinguishes "never refreshed" from "empty windows".
+	CodexQuotaFetched bool
 }
 
 // Version current version
@@ -737,6 +763,15 @@ func UpdateAccountInfo(id string, info AccountInfo) error {
 			}
 			if info.AGQuota != nil {
 				cfg.Accounts[i].AGQuota = info.AGQuota
+			}
+			// Codex: plan type + WHAM windows/credits.
+			if info.CodexPlanType != "" {
+				cfg.Accounts[i].CodexPlanType = info.CodexPlanType
+			}
+			if info.CodexQuotaFetched {
+				cfg.Accounts[i].CodexQuota = info.CodexQuota
+				cfg.Accounts[i].CodexLimitReached = info.CodexLimitReached
+				cfg.Accounts[i].CodexResetCredits = info.CodexResetCredits
 			}
 			return Save()
 		}
