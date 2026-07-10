@@ -83,8 +83,12 @@ export function getSubBadge(type, labelOverride) {
   const s = (type || '').toUpperCase();
   const label = escapeHtml(labelOverride || formatSubscriptionLabel(type));
   if (s.includes('POWER')) return '<span class="badge badge-power">' + label + '</span>';
+  if (s.includes('ENTERPRISE')) return '<span class="badge badge-enterprise">' + label + '</span>';
+  if (s.includes('BUSINESS')) return '<span class="badge badge-business">' + label + '</span>';
   if (s.includes('PRO_PLUS') || s.includes('PROPLUS')) return '<span class="badge badge-proplus">' + label + '</span>';
   if (s.includes('PRO')) return '<span class="badge badge-pro">' + label + '</span>';
+  if (s.includes('PLUS')) return '<span class="badge badge-plus">' + label + '</span>';
+  if (s === 'GO') return '<span class="badge badge-go">' + label + '</span>';
   return '<span class="badge badge-free">' + label + '</span>';
 }
 export function getTrialBadge(a) {
@@ -271,16 +275,10 @@ export function renderGrokDetailSection(a, idAttr) {
 export function renderCodexInfo(a) {
   if (!isCodexAccountDetail(a)) return '';
   const authType = a.codexAuthType || (a.refreshToken ? 'oauth' : 'access_token');
-  let info = '';
-  if (authType === 'access_token') {
-    info = '<span class="badge badge-info">ChatGPT Token</span>';
-  } else {
-    info = '<span class="badge badge-info">ChatGPT OAuth</span>';
-  }
-  if (a.subscriptionTitle) {
-    info += ' <span class="badge badge-info">' + escapeHtml(a.subscriptionTitle) + '</span>';
-  }
-  return '<div class="account-codex-info" style="margin: 4px 0 8px; font-size: 12px;">' + info + '</div>';
+  const label = authType === 'access_token' ? 'ChatGPT Token' : 'ChatGPT OAuth';
+  return '<div class="account-codex-info" style="margin: 4px 0 8px; font-size: 12px;">' +
+    '<span class="badge badge-info">' + escapeHtml(label) + '</span>' +
+    '</div>';
 }
 
 export function isCodexAccountDetail(a) {

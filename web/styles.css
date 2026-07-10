@@ -677,6 +677,26 @@ select.custom-select-native {
   color: #ffffff;
   border-color: #0d9488;
 }
+.badge-go {
+  background: #16a34a;
+  color: #ffffff;
+  border-color: #16a34a;
+}
+.badge-plus {
+  background: #0ea5e9;
+  color: #ffffff;
+  border-color: #0ea5e9;
+}
+.badge-business {
+  background: #0369a1;
+  color: #ffffff;
+  border-color: #0369a1;
+}
+.badge-enterprise {
+  background: #1e293b;
+  color: #ffffff;
+  border-color: #1e293b;
+}
 
 /* Switches */
 .switch {
