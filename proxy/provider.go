@@ -19,10 +19,24 @@ func CallProvider(account *config.Account, payload *KiroPayload, callback *KiroS
 	if account != nil && isAntigravityAccount(account) {
 		return CallAntigravityAPI(account, payload, callback)
 	}
+	if account != nil && isCodexAccount(account) {
+		return CallCodexAPI(account, payload, callback)
+	}
 	if account != nil && isGrokAccount(account) {
 		return CallGrokAPI(account, payload, callback)
 	}
 	return CallKiroAPI(account, payload, callback)
+}
+
+// isCodexAccount reports whether an account should be routed to the OpenAI Codex
+// (ChatGPT) upstream. Both sign-in modes (OAuth and pasted access token) dispatch
+// through CallCodexAPI.
+func isCodexAccount(account *config.Account) bool {
+	if account == nil {
+		return false
+	}
+	return strings.EqualFold(account.Provider, "codex") ||
+		strings.EqualFold(account.AuthMethod, "codex")
 }
 
 // isAntigravityAccount reports whether an account is served by the Antigravity

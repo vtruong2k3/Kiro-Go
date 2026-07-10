@@ -44,6 +44,8 @@ export const state = {
   antigravityPollTimer: null,
   grokSession: '',
   grokPollTimer: null,
+  codexSession: '',
+  codexPollTimer: null,
   exportSelectedIds: new Set(),
   currentVersion: '',
   testLogs: [],

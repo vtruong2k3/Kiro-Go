@@ -426,6 +426,12 @@ func RefreshAccountInfo(account *config.Account) (*config.AccountInfo, error) {
 		return refreshGrokInfo(account, info)
 	}
 
+	// Codex (OpenAI ChatGPT) accounts have no Kiro getUsageLimits endpoint. Their
+	// plan is decoded from the id_token (chatgpt_plan_type); no network call.
+	if isCodexAccount(account) {
+		return refreshCodexInfo(account, info)
+	}
+
 	// 获取使用量和订阅信息
 	usage, err := GetUsageLimits(account)
 	if err != nil {
@@ -651,6 +657,62 @@ func grokTierToTitle(tier int) string {
 		return "SuperGrok"
 	case 5:
 		return "SuperGrok Heavy"
+	default:
+		return ""
+	}
+}
+
+// refreshCodexInfo resolves subscription info for a Codex (ChatGPT) account.
+// OpenAI's usage endpoint is not called (kept simple, mirroring Grok); the plan
+// is read from the stored plan type or decoded from the id_token. Usage/trial
+// fields are left empty so the panel hides the quota bar.
+func refreshCodexInfo(account *config.Account, info *config.AccountInfo) (*config.AccountInfo, error) {
+	plan := strings.TrimSpace(account.CodexPlanType)
+	if plan == "" {
+		_, _, plan = auth.DecodeCodexIDToken(account.CodexIDToken)
+	}
+	info.SubscriptionType = codexPlanToSubscription(plan)
+	info.SubscriptionTitle = codexPlanToTitle(plan)
+	return info, nil
+}
+
+// codexPlanToSubscription maps a ChatGPT plan_type to the internal
+// SubscriptionType bucket. Unknown/empty plans return "" so the badge is left
+// unchanged.
+func codexPlanToSubscription(plan string) string {
+	switch strings.ToLower(strings.TrimSpace(plan)) {
+	case "free":
+		return "FREE"
+	case "go":
+		return "GO"
+	case "plus":
+		return "PLUS"
+	case "pro":
+		return "PRO"
+	case "team", "business":
+		return "BUSINESS"
+	case "enterprise":
+		return "ENTERPRISE"
+	default:
+		return ""
+	}
+}
+
+// codexPlanToTitle maps a ChatGPT plan_type to the human-facing plan name.
+func codexPlanToTitle(plan string) string {
+	switch strings.ToLower(strings.TrimSpace(plan)) {
+	case "free":
+		return "ChatGPT Free"
+	case "go":
+		return "ChatGPT Go"
+	case "plus":
+		return "ChatGPT Plus"
+	case "pro":
+		return "ChatGPT Pro"
+	case "team", "business":
+		return "ChatGPT Business"
+	case "enterprise":
+		return "ChatGPT Enterprise"
 	default:
 		return ""
 	}

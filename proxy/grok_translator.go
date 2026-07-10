@@ -30,6 +30,8 @@ type grokModel struct {
 // OpenAI-compatible endpoint, so they share one catalog. Source: 9router
 // registry/xai.js.
 var grokModels = []grokModel{
+	{"grok-4.5", "Grok 4.5"},
+	{"grok-4-thinking", "Grok 4 Thinking"},
 	{"grok-4", "Grok 4"},
 	{"grok-4-fast-reasoning", "Grok 4 Fast Reasoning"},
 	{"grok-code-fast-1", "Grok Code Fast"},
@@ -399,10 +401,10 @@ type streamToolCallDelta struct {
 
 // openAIResponse is the non-streaming response shape.
 type openAIResponse struct {
-	ID      string         `json:"id"`
-	Object  string         `json:"object"`
-	Created int64          `json:"created"`
-	Model   string         `json:"model"`
+	ID      string `json:"id"`
+	Object  string `json:"object"`
+	Created int64  `json:"created"`
+	Model   string `json:"model"`
 	Choices []struct {
 		Index        int           `json:"index"`
 		Message      OpenAIMessage `json:"message"`

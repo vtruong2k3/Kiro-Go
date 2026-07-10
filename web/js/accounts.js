@@ -111,6 +111,7 @@ export function formatAuthMethod(method) {
   if (normalized === 'github') return t('local.providerGithub');
   if (normalized === 'google') return t('local.providerGoogle');
   if (normalized === 'grok' || normalized === 'xai') return t('provider.grok') || 'Grok / xAI';
+  if (normalized === 'codex') return t('provider.codex') || 'OpenAI Codex';
   return method;
 }
 // accountProviderKey buckets an account into one of the sidebar provider
@@ -120,6 +121,7 @@ export function accountProviderKey(a) {
   const p = String(a.provider || '').toLowerCase();
   const m = String(a.authMethod || '').toLowerCase();
   if (p === 'grok' || p === 'xai' || m === 'grok' || a.grokApiKey) return 'grok';
+  if (p === 'codex' || m === 'codex') return 'codex';
   if (p === 'antigravity' || m === 'antigravity') return 'antigravity';
   return 'kiro';
 }
@@ -127,7 +129,8 @@ export function accountProviderKey(a) {
 export const PROVIDER_NAV = [
   { key: 'kiro', labelKey: 'provider.kiro', icon: 'fa-solid fa-robot' },
   { key: 'antigravity', labelKey: 'provider.antigravity', icon: 'fa-brands fa-google' },
-  { key: 'grok', labelKey: 'provider.grok', icon: 'fa-solid fa-bolt' }
+  { key: 'grok', labelKey: 'provider.grok', icon: 'fa-solid fa-bolt' },
+  { key: 'codex', labelKey: 'provider.codex', icon: 'fa-solid fa-code' }
 ];
 export function getStatusBadge(a) {
   const out = [];
@@ -264,6 +267,45 @@ export function renderGrokDetailSection(a, idAttr) {
     '</div>';
 }
 
+// renderCodexInfo shows a small info row for Codex accounts (OAuth or imported token).
+export function renderCodexInfo(a) {
+  if (!isCodexAccountDetail(a)) return '';
+  const authType = a.codexAuthType || (a.refreshToken ? 'oauth' : 'access_token');
+  let info = '';
+  if (authType === 'access_token') {
+    info = '<span class="badge badge-info">ChatGPT Token</span>';
+  } else {
+    info = '<span class="badge badge-info">ChatGPT OAuth</span>';
+  }
+  if (a.subscriptionTitle) {
+    info += ' <span class="badge badge-info">' + escapeHtml(a.subscriptionTitle) + '</span>';
+  }
+  return '<div class="account-codex-info" style="margin: 4px 0 8px; font-size: 12px;">' + info + '</div>';
+}
+
+export function isCodexAccountDetail(a) {
+  if (!a) return false;
+  const p = String(a.provider || '').toLowerCase();
+  const m = String(a.authMethod || '').toLowerCase();
+  return p === 'codex' || m === 'codex';
+}
+
+export function renderCodexDetailSection(a, idAttr) {
+  const authType = a.codexAuthType || (a.refreshToken ? 'oauth' : 'access_token');
+  const typeLabel = authType === 'access_token' ? 'ChatGPT Access Token' : 'ChatGPT OAuth';
+  let extra = '';
+  if (a.codexPlanType) {
+    extra += detailItem(t('codex.plan') || 'Plan', a.codexPlanType);
+  }
+  return '' +
+    '<div class="detail-section"><h4>' + escapeHtml(t('provider.codex') || 'OpenAI Codex') + '</h4><div class="detail-grid">' +
+    detailItem(t('codex.authType') || 'Auth Type', typeLabel) +
+    extra +
+    '</div>' +
+    '<p class="help-block" style="margin-top:6px;font-size:12px;">' + escapeHtml(t('codex.detailHint') || 'Codex credentials are stored securely. Use the Test button to verify connectivity.') + '</p>' +
+    '</div>';
+}
+
 export function renderAccounts() {
   const container = $('accountsList');
   if (!container) return;
@@ -298,7 +340,7 @@ export function renderAccounts() {
       '<div class="account-info-text">' +
       '<div class="account-email">' + escapeHtml(displayEmail) + '</div>' +
       '<div class="account-meta">' +
-      getSubBadge(a.subscriptionType, accountProviderKey(a) === 'grok' ? a.subscriptionTitle : '') +
+      getSubBadge(a.subscriptionType, (accountProviderKey(a) === 'grok' || accountProviderKey(a) === 'codex') ? a.subscriptionTitle : '') +
       getTrialBadge(a) +
       weightBadge +
       overageBadge +
@@ -333,6 +375,7 @@ export function renderAccounts() {
         '</div>' : '') +
       renderAntigravityQuota(a) +
       renderGrokInfo(a) +
+      renderCodexInfo(a) +
       '<div class="account-stats">' +
       '<div class="account-stat"><div class="account-stat-value">' + (a.requestCount || 0) + '</div><div class="account-stat-label">' + escapeHtml(t('accounts.requests')) + '</div></div>' +
       '<div class="account-stat"><div class="account-stat-value">' + formatNum(a.totalTokens || 0) + '</div><div class="account-stat-label">' + escapeHtml(t('accounts.tokens')) + '</div></div>' +
@@ -532,6 +575,7 @@ export function showDetail(id) {
     '</div></div>' +
 
     (isGrokAccountDetail(a) ? renderGrokDetailSection(a, idAttr) : '') +
+    (isCodexAccountDetail(a) ? renderCodexDetailSection(a, idAttr) : '') +
 
     '<div class="detail-section"><h4>' + escapeHtml(t('detail.machineId')) + '</h4><div class="machine-id-row">' +
     '<input type="text" id="machineIdInput" value="' + escapeAttr(a.machineId || '') + '" placeholder="UUID" />' +

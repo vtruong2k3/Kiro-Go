@@ -267,6 +267,10 @@ type KiroStreamCallback struct {
 	OnError        func(err error)
 	OnCredits      func(credits float64)
 	OnContextUsage func(percentage float64)
+	// OnImage delivers a generated image (base64-encoded). partial is true for
+	// progressive/preview frames and false for the final image. Only the Codex
+	// image pipeline drives this; other providers leave it nil.
+	OnImage func(b64 string, mimeType string, partial bool)
 }
 
 // ==================== API Call ====================

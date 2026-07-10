@@ -26,7 +26,8 @@ export var METHOD_ICONS = {
   cookie: 'fa-solid fa-cookie-bite',
   enterprisesso: 'fa-brands fa-microsoft',
   grok: 'fa-solid fa-robot',
-  antigravity: 'fa-brands fa-google'
+  antigravity: 'fa-brands fa-google',
+  codex: 'fa-solid fa-code'
 };
 export function methodCard(type, title, desc) {
   var icon = METHOD_ICONS[type] || 'fa-solid fa-circle-plus';
@@ -53,6 +54,7 @@ export function showModal(type) {
   else if (type === 'enterprisesso') modalEnterpriseSso(title, body);
   else if (type === 'antigravity') modalAntigravity(title, body);
   else if (type === 'grok') modalGrok(title, body);
+  else if (type === 'codex') modalCodex(title, body);
   if (!modal.classList.contains('active')) openDialog('addModal');
   enhanceCustomSelects(body);
 }
@@ -77,6 +79,11 @@ export function closeModal() {
   // Grok add flow is direct (API key); no need to cancel server session for now
   if (state.grokPollTimer) { clearTimeout(state.grokPollTimer); state.grokPollTimer = null; }
   state.grokSession = '';
+  if (state.codexPollTimer) { clearTimeout(state.codexPollTimer); state.codexPollTimer = null; }
+  if (state.codexSession) {
+    api('/auth/codex/cancel', { method: 'POST', body: JSON.stringify({ sessionId: state.codexSession }) }).catch(() => {});
+  }
+  state.codexSession = '';
 }
 // Which sign-in method cards belong to each provider bucket. When the accounts
 // view is filtered to one provider, the Add dialog shows only that provider's
@@ -84,7 +91,8 @@ export function closeModal() {
 export const PROVIDER_METHODS = {
   kiro: ['builderid', 'iam', 'sso', 'local', 'credentials', 'cookie', 'enterprisesso'],
   antigravity: ['antigravity'],
-  grok: ['grok']
+  grok: ['grok'],
+  codex: ['codex']
 };
 export const METHOD_CARDS = {
   builderid: () => methodCard('builderid', t('modal.builderIdTitle'), t('modal.builderIdDesc')),
@@ -95,10 +103,11 @@ export const METHOD_CARDS = {
   cookie: () => methodCard('cookie', t('modal.cookieTitle'), t('modal.cookieDesc')),
   enterprisesso: () => methodCard('enterprisesso', t('modal.enterpriseSsoTitle'), t('modal.enterpriseSsoDesc')),
   antigravity: () => methodCard('antigravity', t('modal.antigravityTitle'), t('modal.antigravityDesc')),
-  grok: () => methodCard('grok', t('modal.grokTitle') || 'Grok / xAI', t('modal.grokDesc') || 'Add xAI Grok account using API key (recommended) or OAuth')
+  grok: () => methodCard('grok', t('modal.grokTitle') || 'Grok / xAI', t('modal.grokDesc') || 'Add xAI Grok account using API key (recommended) or OAuth'),
+  codex: () => methodCard('codex', t('modal.codexTitle') || 'OpenAI Codex', t('modal.codexDesc') || 'Add a ChatGPT account via OAuth or by importing a token')
 };
-// Provider order used by "All Accounts": kiro methods first, then antigravity, grok.
-export const ALL_METHODS = ['builderid', 'iam', 'sso', 'local', 'credentials', 'cookie', 'enterprisesso', 'antigravity', 'grok'];
+// Provider order used by "All Accounts": kiro methods first, then antigravity, grok, codex.
+export const ALL_METHODS = ['builderid', 'iam', 'sso', 'local', 'credentials', 'cookie', 'enterprisesso', 'antigravity', 'grok', 'codex'];
 
 export function modalAdd(title, body) {
   title.textContent = t('modal.addAccount');
@@ -650,6 +659,185 @@ export async function importGrokAccount() {
     } catch (_) {}
   } catch (e) {
     toastError('Failed to add Grok account: ' + (e.message || e));
+  }
+}
+
+// ==================== Codex (OpenAI ChatGPT) ====================
+
+export function modalCodex(title, body) {
+  title.textContent = t('modal.codexTitle') || 'OpenAI Codex';
+  body.innerHTML =
+    '<p class="help-block">' + escapeHtml(t('modal.codexDesc') || 'Add a ChatGPT account via OAuth or by importing a token.') + '</p>' +
+    '<div class="seg-tabs" id="codexModeTabs">' +
+    '<button type="button" class="seg-tab active" data-codex-mode="oauth">' + escapeHtml(t('codex.modeOauth') || 'ChatGPT OAuth') + '</button>' +
+    '<button type="button" class="seg-tab" data-codex-mode="import">' + escapeHtml(t('codex.modeImport') || 'Import Token') + '</button>' +
+    '</div>' +
+    // ---- OAuth pane ----
+    '<div id="codexOauthPane">' +
+    '<div id="codexStep1">' +
+    '<div class="message message-info"><p class="text-xs">' + escapeHtml(t('kirosso.hostNote')) + '</p></div>' +
+    '<div class="modal-footer">' +
+    '<button class="btn btn-secondary" data-modal-goto="add" type="button">' + escapeHtml(t('common.back')) + '</button>' +
+    '<button class="btn btn-primary" id="startCodexBtn" type="button">' + escapeHtml(t('builderid.startLogin')) + '</button>' +
+    '</div>' +
+    '</div>' +
+    '<div id="codexStep2" class="hidden">' +
+    '<div class="message message-info"><p class="text-xs">' + escapeHtml(t('kirosso.openInstruction')) + '</p></div>' +
+    '<div class="form-group mt-3"><label>' + escapeHtml(t('iam.loginUrl')) + '</label>' +
+    '<div class="endpoint"><span id="codexSignInUrl" class="font-mono text-xs"></span></div>' +
+    '<div class="flex gap-2 mt-2">' +
+    '<button class="btn btn-sm btn-outline flex-1" id="codexOpenBtn" type="button">' + escapeHtml(t('builderid.open')) + '</button>' +
+    '<button class="btn btn-sm btn-outline flex-1" id="codexCopyBtn" type="button">' + escapeHtml(t('common.copy')) + '</button>' +
+    '</div>' +
+    '</div>' +
+    '<p id="codexStatus" class="text-center text-sm mt-4 muted-text">' + escapeHtml(t('builderid.waiting')) + '</p>' +
+    '<div class="form-group mt-3"><label>' + escapeHtml(t('codex.callbackUrl') || t('antigravity.callbackUrl')) + '</label>' +
+    '<input type="text" id="codexCallback" placeholder="http://localhost:1455/auth/callback?code=..." />' +
+    '<p class="help-block text-xs mt-1">' + escapeHtml(t('codex.callbackHint') || t('antigravity.callbackHint')) + '</p></div>' +
+    '<div class="modal-footer">' +
+    '<button class="btn btn-secondary" id="codexCancelBtn" type="button">' + escapeHtml(t('common.cancel')) + '</button>' +
+    '<button class="btn btn-primary" id="codexCompleteBtn" type="button">' + escapeHtml(t('iam.complete')) + '</button>' +
+    '</div>' +
+    '</div>' +
+    '</div>' +
+    // ---- Import token pane ----
+    '<div id="codexImportPane" class="hidden">' +
+    '<div class="form-group">' +
+    '<label>' + escapeHtml(t('codex.token') || 'Token / auth.json') + '</label>' +
+    '<textarea id="codexToken" class="font-mono" rows="5" placeholder=\'{"accessToken":"...","refreshToken":"...","idToken":"..."} or a single ChatGPT access token\'></textarea>' +
+    '<p class="help-block text-xs mt-1">' + escapeHtml(t('codex.tokenHint') || 'Paste a full auth.json (with refresh token) or a single ChatGPT access token.') + '</p>' +
+    '</div>' +
+    '<div class="form-group">' +
+    '<label>' + escapeHtml(t('detail.weight') || 'Weight') + '</label>' +
+    '<input type="number" id="codexWeight" value="1" min="1" style="width:100px" />' +
+    '</div>' +
+    '<div class="modal-footer">' +
+    '<button class="btn btn-secondary" data-modal-goto="add" type="button">' + escapeHtml(t('common.back')) + '</button>' +
+    '<button class="btn btn-primary" id="addCodexBtn" type="button">' + escapeHtml(t('common.add')) + '</button>' +
+    '</div>' +
+    '</div>';
+
+  $('codexOauthPane').classList.remove('hidden');
+  $('codexImportPane').classList.add('hidden');
+
+  qsa('#codexModeTabs .seg-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      const mode = tab.dataset.codexMode;
+      qsa('#codexModeTabs .seg-tab').forEach(el => el.classList.toggle('active', el === tab));
+      $('codexOauthPane').classList.toggle('hidden', mode !== 'oauth');
+      $('codexImportPane').classList.toggle('hidden', mode !== 'import');
+    });
+  });
+
+  $('startCodexBtn').addEventListener('click', startCodexLogin);
+  $('addCodexBtn').addEventListener('click', importCodexAccount);
+}
+
+export async function startCodexLogin() {
+  const res = await api('/auth/codex/start', { method: 'POST', body: JSON.stringify({}) });
+  const d = await res.json();
+  if (d.sessionId && d.signInUrl) {
+    state.codexSession = d.sessionId;
+    $('codexSignInUrl').textContent = d.signInUrl;
+    $('codexStep1').classList.add('hidden');
+    $('codexStep2').classList.remove('hidden');
+    $('codexOpenBtn').addEventListener('click', () => window.open($('codexSignInUrl').textContent, '_blank'));
+    $('codexCopyBtn').addEventListener('click', async () => {
+      await copyText($('codexSignInUrl').textContent);
+      toast(t('common.copied'), 'primary');
+    });
+    $('codexCancelBtn').addEventListener('click', cancelCodexLogin);
+    $('codexCompleteBtn').addEventListener('click', completeCodexManual);
+    window.open(d.signInUrl, '_blank');
+    pollCodex(d.interval || 2);
+  } else toastError(t('common.failed') + ': ' + (d.error || ''));
+}
+
+export async function completeCodexManual() {
+  const callbackUrl = ($('codexCallback').value || '').trim();
+  if (!callbackUrl) { toastError(t('common.failed') + ': ' + (t('codex.callbackUrl') || t('antigravity.callbackUrl'))); return; }
+  if (state.codexPollTimer) { clearTimeout(state.codexPollTimer); state.codexPollTimer = null; }
+  $('codexStatus').textContent = t('builderid.waiting');
+  const res = await api('/auth/codex/complete', { method: 'POST', body: JSON.stringify({ sessionId: state.codexSession, callbackUrl }) });
+  const d = await res.json();
+  if (d.completed) {
+    state.codexSession = '';
+    closeModal(); loadAccounts(); loadStats();
+    toastPrimary(t('builderid.success') + ': ' + (d.account?.email || d.account?.id));
+    autoRefreshNewAccount(d.account?.id);
+  } else {
+    toastError(t('common.failed') + ': ' + (d.error || ''));
+    pollCodex(2);
+  }
+}
+
+export function pollCodex(interval) {
+  state.codexPollTimer = setTimeout(async () => {
+    const res = await api('/auth/codex/poll', { method: 'POST', body: JSON.stringify({ sessionId: state.codexSession }) });
+    const d = await res.json();
+    if (d.completed) {
+      state.codexSession = '';
+      closeModal(); loadAccounts(); loadStats();
+      toastPrimary(t('builderid.success') + ': ' + (d.account?.email || d.account?.id));
+      autoRefreshNewAccount(d.account?.id);
+    } else if (d.success && !d.completed) {
+      $('codexStatus').textContent = t('builderid.waiting');
+      pollCodex(interval);
+    } else {
+      toastError(t('common.failed') + ': ' + (d.error || ''));
+      cancelCodexLogin();
+    }
+  }, interval * 1000);
+}
+
+export function cancelCodexLogin() {
+  if (state.codexPollTimer) { clearTimeout(state.codexPollTimer); state.codexPollTimer = null; }
+  if (state.codexSession) {
+    api('/auth/codex/cancel', { method: 'POST', body: JSON.stringify({ sessionId: state.codexSession }) }).catch(() => {});
+  }
+  state.codexSession = '';
+  showModal('add');
+}
+
+export async function importCodexAccount() {
+  const raw = ($('codexToken').value || '').trim();
+  const weight = parseInt($('codexWeight').value || '1', 10) || 1;
+  if (!raw) {
+    return toastError((t('codex.token') || 'Token') + ' is required');
+  }
+
+  // Accept either a full auth.json object or a single access token string.
+  const payload = { weight };
+  if (raw[0] === '{') {
+    try {
+      const parsed = JSON.parse(raw);
+      payload.accessToken = parsed.accessToken || parsed.access_token || '';
+      payload.refreshToken = parsed.refreshToken || parsed.refresh_token || '';
+      payload.idToken = parsed.idToken || parsed.id_token || '';
+      payload.expiresIn = parsed.expiresIn || parsed.expires_in || 0;
+    } catch (e) {
+      return toastError('Invalid auth.json: ' + (e.message || e));
+    }
+  } else {
+    payload.accessToken = raw;
+  }
+  if (!payload.accessToken) {
+    return toastError('accessToken is required');
+  }
+
+  try {
+    const res = await api('/accounts/codex/import', { method: 'POST', body: JSON.stringify(payload) });
+    const d = await res.json();
+    if (!res.ok || !d.success) {
+      throw new Error(d.error || 'Failed to add Codex account');
+    }
+    closeModal();
+    await loadAccounts();
+    await loadStats();
+    toastPrimary(t('builderid.success') + ': ' + (d.account?.email || d.account?.id));
+    autoRefreshNewAccount(d.account?.id);
+  } catch (e) {
+    toastError('Failed to add Codex account: ' + (e.message || e));
   }
 }
 

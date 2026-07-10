@@ -85,6 +85,17 @@ type Account struct {
 	GrokAPIKey   string `json:"grokApiKey,omitempty"`
 	GrokAuthType string `json:"grokAuthType,omitempty"`
 
+	// Codex (OpenAI ChatGPT) fields. Provider == "codex" / AuthMethod == "codex".
+	// AccessToken/RefreshToken/ExpiresAt/Email are reused from the shared block above.
+	// Two sign-in modes (CodexAuthType):
+	//   - "oauth": PKCE OAuth against auth.openai.com; access+refresh+id_token issued,
+	//     refreshed via JSON body (see auth/codex.go).
+	//   - "access_token": a single ChatGPT access token pasted manually, no refresh token.
+	CodexAuthType  string `json:"codexAuthType,omitempty"`  // "oauth" | "access_token"
+	CodexAccountID string `json:"codexAccountId,omitempty"` // chatgpt-account-id header value (from id_token)
+	CodexPlanType  string `json:"codexPlanType,omitempty"`  // raw chatgpt_plan_type claim (free/go/plus/pro/team/business/enterprise)
+	CodexIDToken   string `json:"codexIdToken,omitempty"`   // id_token retained for account-id/plan backfill
+
 	// Per-account outbound proxy (falls back to global ProxyURL if empty)
 	ProxyURL string `json:"proxyURL,omitempty"`
 

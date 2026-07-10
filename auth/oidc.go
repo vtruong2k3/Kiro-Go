@@ -39,6 +39,16 @@ func RefreshToken(account *config.Account) (string, string, int64, string, error
 		return RefreshAntigravityToken(account, client)
 	}
 
+	// Codex (OpenAI ChatGPT) OAuth accounts refresh against auth.openai.com
+	// (refresh_token grant, JSON body, public PKCE client). Import "access_token"
+	// accounts have no refresh token and never reach here (ensureValidToken
+	// short-circuits them). OpenAI issues no profileArn, so "" is returned for it.
+	if account.RefreshToken != "" && (account.AuthMethod == "codex" ||
+		strings.EqualFold(account.Provider, "codex")) {
+		accessToken, refreshToken, expiresAt, err := RefreshCodexToken(account, client)
+		return accessToken, refreshToken, expiresAt, "", err
+	}
+
 	// Grok Build OAuth accounts refresh against the xAI token endpoint
 	// (refresh_token grant, public PKCE client). API-key Grok accounts have no
 	// refresh token and never reach here (ensureValidToken short-circuits them).

@@ -398,6 +398,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.handleOpenAIResponses(w, ar)
+	case path == "/v1/images/generations" || path == "/images/generations" ||
+		path == "/v1/images/edits" || path == "/images/edits":
+		ar := h.authenticateForOpenAI(w, r)
+		if ar == nil {
+			return
+		}
+		h.handleImageGenerations(w, ar)
 	case path == "/v1/models" || path == "/models":
 		h.handleModels(w, r)
 	case path == "/api/event_logging/batch":
@@ -606,6 +613,14 @@ func (h *Handler) refreshModelsCache() {
 			continue
 		}
 
+		// Codex (ChatGPT) accounts use a static model catalog.
+		if isCodexAccount(account) {
+			modelIDs := codexModelIDs()
+			h.pool.SetModelList(account.ID, modelIDs)
+			aggregated = mergeUniqueModels(aggregated, codexModelInfos())
+			continue
+		}
+
 		models, err := ListAvailableModels(account)
 		if err != nil {
 			logger.Warnf("[ModelsCache] Failed to refresh for %s: %v", account.Email, err)
@@ -658,6 +673,18 @@ func (h *Handler) fetchAndCacheAccountModels(account *config.Account) error {
 		h.modelsCacheTime = time.Now().Unix()
 		h.modelsCacheMu.Unlock()
 		logger.Infof("[ModelsCache] Registered %d Grok models for account %s", len(gModels), account.Email)
+		return nil
+	}
+
+	// Codex (ChatGPT) accounts use a static model catalog.
+	if isCodexAccount(account) {
+		h.pool.SetModelList(account.ID, codexModelIDs())
+		cModels := codexModelInfos()
+		h.modelsCacheMu.Lock()
+		h.cachedModels = mergeUniqueModels(h.cachedModels, cModels)
+		h.modelsCacheTime = time.Now().Unix()
+		h.modelsCacheMu.Unlock()
+		logger.Infof("[ModelsCache] Registered %d Codex models for account %s", len(cModels), account.Email)
 		return nil
 	}
 
@@ -1655,6 +1682,80 @@ func (h *Handler) handleOpenAIChat(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleImageGenerations serves POST /v1/images/generations and /v1/images/edits
+// (OpenAI images-compat). Only Codex accounts with an image model (gpt-*-image)
+// can serve these; the pool routes by model. Returns {created, data:[{b64_json}]}.
+func (h *Handler) handleImageGenerations(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method Not Allowed", 405)
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		h.sendOpenAIError(w, 400, "invalid_request_error", "Failed to read request body")
+		return
+	}
+
+	var req CodexImageRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		h.sendOpenAIError(w, 400, "invalid_request_error", "Invalid JSON")
+		return
+	}
+	if strings.TrimSpace(req.Prompt) == "" {
+		h.sendOpenAIError(w, 400, "invalid_request_error", "prompt is required")
+		return
+	}
+	if req.Model == "" {
+		req.Model = "gpt-5.5-image"
+	}
+	if !isCodexImageModel(req.Model) {
+		h.sendOpenAIError(w, 400, "invalid_request_error", "model must be a Codex image model (e.g. gpt-5.5-image)")
+		return
+	}
+
+	excluded := make(map[string]bool)
+	var lastErr error
+	for attempt := 0; attempt < maxAccountRetryAttempts; attempt++ {
+		account := h.pool.GetNextForModelExcluding(req.Model, excluded)
+		if account == nil {
+			break
+		}
+		if !isCodexAccount(account) {
+			excluded[account.ID] = true
+			continue
+		}
+		if err := h.ensureValidToken(account); err != nil {
+			lastErr = err
+			excluded[account.ID] = true
+			h.handleAccountFailure(account, err)
+			continue
+		}
+
+		b64, mimeType, err := CallCodexImageAPI(account, &req)
+		if err != nil {
+			lastErr = err
+			excluded[account.ID] = true
+			h.handleAccountFailure(account, err)
+			continue
+		}
+		_ = mimeType
+
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"created": time.Now().Unix(),
+			"data":    []map[string]interface{}{{"b64_json": b64}},
+		})
+		return
+	}
+
+	msg := "no available Codex account for image generation"
+	if lastErr != nil {
+		msg = lastErr.Error()
+	}
+	h.sendOpenAIError(w, 502, "server_error", msg)
+}
+
 // handleOpenAIStream OpenAI 流式响应
 func (h *Handler) handleOpenAIStream(w http.ResponseWriter, payload *KiroPayload, model string, thinking bool, estimatedInputTokens int, apiKeyID string) {
 	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
@@ -2173,6 +2274,12 @@ func (h *Handler) ensureValidToken(account *config.Account) error {
 		// token and fall through to the normal expiry-based refresh below.
 		return nil
 	}
+	if isCodexAccount(account) && account.RefreshToken == "" {
+		// Codex "access_token" imports carry a single pasted token with no refresh
+		// token — nothing to refresh. OAuth Codex accounts have a refresh token and
+		// fall through to the normal expiry-based refresh below.
+		return nil
+	}
 	if account.ExpiresAt == 0 || time.Now().Unix() < account.ExpiresAt-tokenRefreshSkewSeconds {
 		return nil
 	}
@@ -2303,6 +2410,16 @@ func (h *Handler) handleAdminAPI(w http.ResponseWriter, r *http.Request) {
 		h.apiCancelGrok(w, r)
 	case path == "/auth/grok/complete" && r.Method == "POST":
 		h.apiCompleteGrok(w, r)
+	case path == "/auth/codex/start" && r.Method == "POST":
+		h.apiStartCodex(w, r)
+	case path == "/auth/codex/poll" && r.Method == "POST":
+		h.apiPollCodex(w, r)
+	case path == "/auth/codex/cancel" && r.Method == "POST":
+		h.apiCancelCodex(w, r)
+	case path == "/auth/codex/complete" && r.Method == "POST":
+		h.apiCompleteCodex(w, r)
+	case path == "/accounts/codex/import" && r.Method == "POST":
+		h.apiImportCodex(w, r)
 	case path == "/auth/builderid/start" && r.Method == "POST":
 		h.apiStartBuilderIdLogin(w, r)
 	case path == "/auth/builderid/poll" && r.Method == "POST":
@@ -2459,7 +2576,8 @@ func (h *Handler) apiAddAccount(w http.ResponseWriter, r *http.Request) {
 	if account.Enabled {
 		shouldRefresh := account.AccessToken != "" ||
 			isAntigravityAccount(&account) ||
-			isGrokAccount(&account)
+			isGrokAccount(&account) ||
+			isCodexAccount(&account)
 
 		if shouldRefresh {
 			go func(acc config.Account) {
@@ -3255,6 +3373,218 @@ func (h *Handler) persistGrokResult(w http.ResponseWriter, result *auth.XaiResul
 	// Register the static Grok model list immediately so the first request routes
 	// to this account without waiting for the background models refresh.
 	h.pool.SetModelList(account.ID, grokModelIDs())
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":   true,
+		"completed": true,
+		"account": map[string]interface{}{
+			"id":         account.ID,
+			"email":      account.Email,
+			"authMethod": account.AuthMethod,
+		},
+	})
+}
+
+// apiStartCodex begins a Codex (ChatGPT) OAuth PKCE sign-in. The consent URL
+// must be opened in a browser on the same host as the proxy (loopback port
+// 1455). The front end polls /auth/codex/poll until done.
+func (h *Handler) apiStartCodex(w http.ResponseWriter, r *http.Request) {
+	session, authURL, err := auth.StartCodexLogin()
+	if err != nil {
+		w.WriteHeader(500)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"sessionId": session.ID,
+		"signInUrl": authURL,
+		"interval":  2,
+	})
+}
+
+// apiCancelCodex tears down an in-flight Codex OAuth sign-in, freeing the
+// loopback callback port immediately.
+func (h *Handler) apiCancelCodex(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SessionID string `json:"sessionId"`
+	}
+	json.NewDecoder(r.Body).Decode(&req)
+	if req.SessionID != "" {
+		auth.CancelCodexLogin(req.SessionID)
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
+}
+
+// apiPollCodex reports the Codex OAuth sign-in status. Once the listener captures
+// the code it exchanges it for tokens, persists the account, and returns
+// completed=true.
+func (h *Handler) apiPollCodex(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SessionID string `json:"sessionId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(400)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid JSON"})
+		return
+	}
+
+	result, status, err := auth.PollCodexAuth(req.SessionID)
+	if err != nil {
+		w.WriteHeader(400)
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": err.Error()})
+		return
+	}
+
+	if status == "pending" {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":   true,
+			"completed": false,
+			"status":    "pending",
+		})
+		return
+	}
+
+	h.persistCodexResult(w, result)
+}
+
+// apiCompleteCodex finishes a Codex OAuth sign-in from a manually pasted callback
+// URL (or bare authorization code) — the fallback for headless / domain
+// deployments where the browser cannot reach the loopback listener.
+func (h *Handler) apiCompleteCodex(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SessionID   string `json:"sessionId"`
+		CallbackURL string `json:"callbackUrl"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(400)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid JSON"})
+		return
+	}
+
+	result, err := auth.CompleteCodexManual(req.SessionID, req.CallbackURL)
+	if err != nil {
+		w.WriteHeader(400)
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": err.Error()})
+		return
+	}
+
+	h.persistCodexResult(w, result)
+}
+
+// apiImportCodex imports a Codex account from a manually supplied credential. Two
+// shapes are accepted:
+//   - full auth.json: accessToken + refreshToken + idToken (+ expiresIn) → an
+//     "oauth" account that can be refreshed against auth.openai.com.
+//   - a single ChatGPT access token: accessToken only → an "access_token"
+//     account with no refresh (the JWT itself is decoded for account info).
+func (h *Handler) apiImportCodex(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		AccessToken  string `json:"accessToken"`
+		RefreshToken string `json:"refreshToken"`
+		IDToken      string `json:"idToken"`
+		ExpiresIn    int    `json:"expiresIn"`
+		Weight       int    `json:"weight"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(400)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid JSON"})
+		return
+	}
+	req.AccessToken = strings.TrimSpace(req.AccessToken)
+	if req.AccessToken == "" {
+		w.WriteHeader(400)
+		json.NewEncoder(w).Encode(map[string]string{"error": "accessToken is required"})
+		return
+	}
+
+	// Decode account info from the id_token if present, else from the access
+	// token itself (a ChatGPT access token is also a JWT carrying the claims).
+	idForClaims := strings.TrimSpace(req.IDToken)
+	email, accountID, planType := auth.DecodeCodexIDToken(idForClaims)
+	if accountID == "" && email == "" {
+		email, accountID, planType = auth.DecodeCodexIDToken(req.AccessToken)
+	}
+
+	authType := "access_token"
+	var expiresAt int64
+	if strings.TrimSpace(req.RefreshToken) != "" {
+		authType = "oauth"
+	}
+	if req.ExpiresIn > 0 {
+		expiresAt = time.Now().Unix() + int64(req.ExpiresIn)
+	}
+
+	account := config.Account{
+		ID:             auth.GenerateAccountID(),
+		Email:          email,
+		AccessToken:    req.AccessToken,
+		RefreshToken:   strings.TrimSpace(req.RefreshToken),
+		AuthMethod:     "codex",
+		Provider:       "codex",
+		CodexAuthType:  authType,
+		CodexAccountID: accountID,
+		CodexPlanType:  planType,
+		CodexIDToken:   idForClaims,
+		ExpiresAt:      expiresAt,
+		SubscriptionType:  codexPlanToSubscription(planType),
+		SubscriptionTitle: codexPlanToTitle(planType),
+		LastRefresh:    time.Now().Unix(),
+		Weight:         req.Weight,
+		Enabled:        true,
+		MachineId:      config.GenerateMachineId(),
+	}
+
+	if err := config.AddAccount(account); err != nil {
+		w.WriteHeader(500)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	h.pool.Reload()
+	h.pool.SetModelList(account.ID, codexModelIDs())
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"account": map[string]interface{}{
+			"id":         account.ID,
+			"email":      account.Email,
+			"authMethod": account.AuthMethod,
+			"plan":       planType,
+		},
+	})
+}
+
+// persistCodexResult saves a resolved Codex OAuth credential as an account,
+// reloads the pool, registers the static model list, and writes the JSON
+// response. Shared by the loopback poll flow and the manual paste flow.
+func (h *Handler) persistCodexResult(w http.ResponseWriter, result *auth.CodexResult) {
+	account := config.Account{
+		ID:                auth.GenerateAccountID(),
+		Email:             result.Email,
+		AccessToken:       result.AccessToken,
+		RefreshToken:      result.RefreshToken,
+		AuthMethod:        "codex",
+		Provider:          "codex",
+		CodexAuthType:     "oauth",
+		CodexAccountID:    result.AccountID,
+		CodexPlanType:     result.PlanType,
+		CodexIDToken:      result.IDToken,
+		ExpiresAt:         time.Now().Unix() + int64(result.ExpiresIn),
+		SubscriptionType:  codexPlanToSubscription(result.PlanType),
+		SubscriptionTitle: codexPlanToTitle(result.PlanType),
+		LastRefresh:       time.Now().Unix(),
+		Enabled:           true,
+		MachineId:         config.GenerateMachineId(),
+	}
+
+	if err := config.AddAccount(account); err != nil {
+		w.WriteHeader(500)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	h.pool.Reload()
+	h.pool.SetModelList(account.ID, codexModelIDs())
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":   true,
