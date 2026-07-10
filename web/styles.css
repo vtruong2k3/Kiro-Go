@@ -3831,6 +3831,14 @@ img.brand-icon {
   gap: 0.375rem;
   padding: 0 0.875rem 0.875rem;
 }
+/* Loading spinner should span the full panel width and stay centered */
+.provider-models-list > .hamster-loader {
+  grid-column: 1 / -1;
+  width: 100%;
+  min-height: 12rem;
+  justify-self: stretch;
+  align-self: center;
+}
 .provider-model-row {
   display: flex;
   align-items: center;
