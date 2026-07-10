@@ -2715,13 +2715,14 @@ func (h *Handler) handleAdminAPI(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(path, "/api-keys/") && strings.HasSuffix(path, "/reveal") && r.Method == "GET":
 		id := strings.TrimSuffix(strings.TrimPrefix(path, "/api-keys/"), "/reveal")
 		h.apiRevealApiKey(w, r, id)
+	case strings.HasPrefix(path, "/api-keys/") && strings.HasSuffix(path, "/ips") && r.Method == "GET":
+		// Must be before the generic GET /api-keys/:id case, otherwise id becomes "{id}/ips".
+		id := strings.TrimSuffix(strings.TrimPrefix(path, "/api-keys/"), "/ips")
+		h.apiGetApiKeyIPs(w, r, id)
 	case strings.HasPrefix(path, "/api-keys/") && r.Method == "GET":
 		h.apiGetApiKey(w, r, strings.TrimPrefix(path, "/api-keys/"))
 	case strings.HasPrefix(path, "/api-keys/") && r.Method == "PUT":
 		h.apiUpdateApiKey(w, r, strings.TrimPrefix(path, "/api-keys/"))
-	case strings.HasPrefix(path, "/api-keys/") && strings.HasSuffix(path, "/ips") && r.Method == "GET":
-		id := strings.TrimSuffix(strings.TrimPrefix(path, "/api-keys/"), "/ips")
-		h.apiGetApiKeyIPs(w, r, id)
 	case strings.HasPrefix(path, "/api-keys/") && r.Method == "DELETE":
 		h.apiDeleteApiKey(w, r, strings.TrimPrefix(path, "/api-keys/"))
 	case path == "/security/blocked-ips" && r.Method == "GET":
