@@ -655,5 +655,22 @@
   "security.unblocked": "IP unblocked",
   "security.invalidIP": "Invalid IP address",
   "logs.ip": "IP",
-  "logs.apiKey": "API Key"
+  "logs.apiKey": "API Key",
+  "modal.apiKeyTitle": "Kiro API Key",
+  "modal.apiKeyDesc": "Add accounts with Kiro CLI API keys (ksk_…). One key per line for batch import. No SSO required.",
+  "apikey.keyLabel": "API Key",
+  "apikey.keyPlaceholder": "ksk_...",
+  "apikey.keyHint": "Validated against management.{region}.kiro.dev. Leave region blank to auto-detect.",
+  "apikey.nicknamePlaceholder": "Optional display name",
+  "apikey.add": "Add API Key",
+  "apikey.validating": "Validating...",
+  "region.add": "Add",
+  "region.hint": "Select an AWS region, or add a custom one (e.g. eu-central-1).",
+  "region.invalid": "Invalid AWS region (e.g. us-east-1, eu-central-1)",
+  "region.added": "Region added",
+  "auth.apiKey": "API Key",
+  "detail.nickname": "Nickname",
+  "apikey.addedCount": "Added {0} API key(s)",
+  "region.auto": "— auto-detect region —",
+  "region.hintApiKey": "Leave auto-detect, or pick/add a region (e.g. eu-central-1)."
 }

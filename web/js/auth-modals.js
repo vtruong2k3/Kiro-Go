@@ -12,7 +12,7 @@ import { state } from './state.js';
 import {
   $, qsa, escapeHtml, escapeAttr, copyText, getDisplayEmail,
   openDialog, closeDialog, t, toast, toastPrimary, toastWarning, toastError,
-  enhanceCustomSelects, api,
+  enhanceCustomSelects, refreshCustomSelects, api,
 } from './core.js';
 import { formatAuthMethod, formatSubscriptionLabel, loadAccounts } from './accounts.js';
 import { loadStats } from '../app.js';
@@ -25,6 +25,7 @@ export var METHOD_ICONS = {
   credentials: 'fa-solid fa-code',
   cookie: 'fa-solid fa-cookie-bite',
   enterprisesso: 'fa-brands fa-microsoft',
+  apikey: 'fa-solid fa-key',
   grok: 'fa-solid fa-robot',
   antigravity: 'fa-brands fa-google',
   codex: 'fa-solid fa-code'
@@ -55,6 +56,7 @@ export function showModal(type) {
   else if (type === 'antigravity') modalAntigravity(title, body);
   else if (type === 'grok') modalGrok(title, body);
   else if (type === 'codex') modalCodex(title, body);
+  else if (type === 'apikey') modalKiroApiKey(title, body);
   if (!modal.classList.contains('active')) openDialog('addModal');
   enhanceCustomSelects(body);
 }
@@ -89,7 +91,7 @@ export function closeModal() {
 // view is filtered to one provider, the Add dialog shows only that provider's
 // methods (see modalAdd + the addAccountBtn handler).
 export const PROVIDER_METHODS = {
-  kiro: ['builderid', 'iam', 'sso', 'local', 'credentials', 'cookie', 'enterprisesso'],
+  kiro: ['builderid', 'iam', 'sso', 'local', 'credentials', 'cookie', 'enterprisesso', 'apikey'],
   antigravity: ['antigravity'],
   grok: ['grok'],
   codex: ['codex']
@@ -102,12 +104,222 @@ export const METHOD_CARDS = {
   credentials: () => methodCard('credentials', t('modal.credentialsTitle'), t('modal.credentialsDesc')),
   cookie: () => methodCard('cookie', t('modal.cookieTitle'), t('modal.cookieDesc')),
   enterprisesso: () => methodCard('enterprisesso', t('modal.enterpriseSsoTitle'), t('modal.enterpriseSsoDesc')),
+  apikey: () => methodCard('apikey', t('modal.apiKeyTitle') || 'Kiro API Key', t('modal.apiKeyDesc') || 'Add accounts with Kiro CLI API keys (ksk_…). One key per line for batch import.'),
   antigravity: () => methodCard('antigravity', t('modal.antigravityTitle'), t('modal.antigravityDesc')),
   grok: () => methodCard('grok', t('modal.grokTitle') || 'Grok / xAI', t('modal.grokDesc') || 'Add xAI Grok account using API key (recommended) or OAuth'),
   codex: () => methodCard('codex', t('modal.codexTitle') || 'OpenAI Codex', t('modal.codexDesc') || 'Add a ChatGPT account via OAuth or by importing a token')
 };
 // Provider order used by "All Accounts": kiro methods first, then antigravity, grok, codex.
-export const ALL_METHODS = ['builderid', 'iam', 'sso', 'local', 'credentials', 'cookie', 'enterprisesso', 'antigravity', 'grok', 'codex'];
+export const ALL_METHODS = ['builderid', 'iam', 'sso', 'local', 'credentials', 'cookie', 'enterprisesso', 'apikey', 'antigravity', 'grok', 'codex'];
+
+
+// Default AWS regions offered in Kiro API-key / login pickers. Users can add more
+// via the adjacent "Add region" control; custom values are session-only.
+export const DEFAULT_AWS_REGIONS = [
+  'us-east-1',
+  'us-east-2',
+  'us-west-1',
+  'us-west-2',
+  'eu-central-1',
+  'eu-west-1',
+  'eu-west-2',
+  'eu-west-3',
+  'eu-north-1',
+  'ap-northeast-1',
+  'ap-northeast-2',
+  'ap-southeast-1',
+  'ap-southeast-2',
+  'ap-south-1',
+  'sa-east-1',
+  'ca-central-1',
+];
+const AWS_REGION_RE = /^[a-z]{2}(?:-[a-z]+)+-\d{1,2}$/;
+export function isValidAwsRegion(region) {
+  return AWS_REGION_RE.test(String(region || '').trim().toLowerCase());
+}
+export function regionSelectHTML(selectId, selected) {
+  const current = (selected || 'us-east-1').trim() || 'us-east-1';
+  const regions = DEFAULT_AWS_REGIONS.slice();
+  if (current && !regions.includes(current) && isValidAwsRegion(current)) {
+    regions.unshift(current);
+  }
+  const options = regions.map(function (r) {
+    return '<option value="' + escapeAttr(r) + '"' + (r === current ? ' selected' : '') + '>' + escapeHtml(r) + '</option>';
+  }).join('');
+  return '' +
+    '<div class="form-group">' +
+    '<label>' + escapeHtml(t('detail.region')) + '</label>' +
+    '<div class="region-select-row">' +
+    '<select id="' + escapeAttr(selectId) + '">' + options + '</select>' +
+    '<button type="button" class="btn btn-sm btn-outline" data-region-add-for="' + escapeAttr(selectId) + '">' +
+    '<i class="fa-solid fa-plus" aria-hidden="true"></i> ' + escapeHtml(t('region.add') || 'Add') +
+    '</button>' +
+    '</div>' +
+    '<div class="region-add-row hidden" data-region-add-panel="' + escapeAttr(selectId) + '">' +
+    '<input type="text" class="font-mono" data-region-add-input="' + escapeAttr(selectId) + '" placeholder="eu-central-1" />' +
+    '<button type="button" class="btn btn-sm btn-primary" data-region-add-confirm="' + escapeAttr(selectId) + '">' +
+    escapeHtml(t('common.confirm') || 'Confirm') +
+    '</button>' +
+    '</div>' +
+    '<p class="help-block text-xs mt-1">' + escapeHtml(t('region.hint') || 'Select an AWS region, or add a custom one (e.g. eu-central-1).') + '</p>' +
+    '</div>';
+}
+export function bindRegionSelect(root) {
+  if (!root) return;
+  qsa('[data-region-add-for]', root).forEach(function (btn) {
+    if (btn.dataset.bound === '1') return;
+    btn.dataset.bound = '1';
+    btn.addEventListener('click', function () {
+      var id = btn.getAttribute('data-region-add-for');
+      var panel = root.querySelector('[data-region-add-panel="' + id + '"]');
+      if (!panel) return;
+      panel.classList.toggle('hidden');
+      var input = root.querySelector('[data-region-add-input="' + id + '"]');
+      if (input && !panel.classList.contains('hidden')) {
+        input.focus();
+        input.select();
+      }
+    });
+  });
+  qsa('[data-region-add-confirm]', root).forEach(function (btn) {
+    if (btn.dataset.bound === '1') return;
+    btn.dataset.bound = '1';
+    btn.addEventListener('click', function () {
+      var id = btn.getAttribute('data-region-add-confirm');
+      var select = $(id);
+      var input = root.querySelector('[data-region-add-input="' + id + '"]');
+      var panel = root.querySelector('[data-region-add-panel="' + id + '"]');
+      if (!select || !input) return;
+      var value = (input.value || '').trim().toLowerCase();
+      if (!isValidAwsRegion(value)) {
+        toastError(t('region.invalid') || 'Invalid AWS region (e.g. us-east-1, eu-central-1)');
+        return;
+      }
+      var exists = false;
+      Array.prototype.forEach.call(select.options, function (opt) {
+        if (opt.value === value) exists = true;
+      });
+      if (!exists) {
+        var opt = document.createElement('option');
+        opt.value = value;
+        opt.textContent = value;
+        select.appendChild(opt);
+      }
+      select.value = value;
+      refreshCustomSelects(root);
+      if (panel) panel.classList.add('hidden');
+      input.value = '';
+      toastPrimary((t('region.added') || 'Region added') + ': ' + value);
+    });
+  });
+  qsa('[data-region-add-input]', root).forEach(function (input) {
+    if (input.dataset.bound === '1') return;
+    input.dataset.bound = '1';
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        var id = input.getAttribute('data-region-add-input');
+        var btn = root.querySelector('[data-region-add-confirm="' + id + '"]');
+        if (btn) btn.click();
+      }
+    });
+  });
+}
+export function modalKiroApiKey(title, body) {
+  title.textContent = t('modal.apiKeyTitle') || 'Kiro API Key';
+  var regions = [''].concat(DEFAULT_AWS_REGIONS);
+  var opts = regions.map(function (r) {
+    var label = r === '' ? (t('region.auto') || '— auto-detect region —') : r;
+    return '<option value="' + escapeAttr(r) + '">' + escapeHtml(label) + '</option>';
+  }).join('');
+  body.innerHTML =
+    '<p class="help-block">' + escapeHtml(t('modal.apiKeyDesc') || 'Add accounts with Kiro CLI API keys (ksk_…). One key per line for batch import. No SSO required.') + '</p>' +
+    '<div class="form-group">' +
+    '<label>' + escapeHtml(t('apikey.keyLabel') || 'API Key') + ' <span class="text-danger">*</span></label>' +
+    '<textarea id="kiroApiKey" class="font-mono" rows="4" placeholder="ksk_..."></textarea>' +
+    '<p class="help-block text-xs mt-1">' + escapeHtml(t('apikey.keyHint') || 'Validated against management.{region}.kiro.dev. Region is auto-detected if left blank.') + '</p>' +
+    '</div>' +
+    '<div class="form-group">' +
+    '<label>' + escapeHtml(t('detail.region')) + '</label>' +
+    '<div class="region-select-row">' +
+    '<select id="kiroApiKeyRegion">' + opts + '</select>' +
+    '<button type="button" class="btn btn-sm btn-outline" data-region-add-for="kiroApiKeyRegion">' +
+    '<i class="fa-solid fa-plus" aria-hidden="true"></i> ' + escapeHtml(t('region.add') || 'Add') +
+    '</button>' +
+    '</div>' +
+    '<div class="region-add-row hidden" data-region-add-panel="kiroApiKeyRegion">' +
+    '<input type="text" class="font-mono" data-region-add-input="kiroApiKeyRegion" placeholder="eu-central-1" />' +
+    '<button type="button" class="btn btn-sm btn-primary" data-region-add-confirm="kiroApiKeyRegion">' +
+    escapeHtml(t('common.confirm') || 'Confirm') +
+    '</button>' +
+    '</div>' +
+    '<p class="help-block text-xs mt-1">' + escapeHtml(t('region.hintApiKey') || 'Leave auto-detect, or pick/add a region (e.g. eu-central-1).') + '</p>' +
+    '</div>' +
+    '<div class="form-group">' +
+    '<label>' + escapeHtml(t('detail.nickname') || 'Nickname') + '</label>' +
+    '<input type="text" id="kiroApiKeyNickname" placeholder="' + escapeAttr(t('apikey.nicknamePlaceholder') || 'Optional display name') + '" />' +
+    '</div>' +
+    '<div class="modal-footer">' +
+    '<button class="btn btn-secondary" data-modal-goto="add" type="button">' + escapeHtml(t('common.back')) + '</button>' +
+    '<button class="btn btn-primary" id="addKiroApiKeyBtn" type="button">' + escapeHtml(t('apikey.add') || t('common.add') || 'Add API Key') + '</button>' +
+    '</div>';
+  bindRegionSelect(body);
+  $('addKiroApiKeyBtn').addEventListener('click', importKiroApiKey);
+}
+export async function importKiroApiKey() {
+  const raw = ($('kiroApiKey').value || '').trim();
+  const region = ($('kiroApiKeyRegion').value || '').trim();
+  const nickname = ($('kiroApiKeyNickname').value || '').trim();
+  if (!raw) {
+    return toastError((t('apikey.keyLabel') || 'API Key') + ' is required');
+  }
+  if (region && !isValidAwsRegion(region)) {
+    return toastError(t('region.invalid') || 'Invalid AWS region');
+  }
+  const keys = raw.split(/\r?\n/).map(function (s) { return s.trim(); }).filter(Boolean);
+  const btn = $('addKiroApiKeyBtn');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = t('apikey.validating') || 'Validating...';
+  }
+  let ok = 0, fail = 0, firstId = '', lastErr = '';
+  try {
+    for (let i = 0; i < keys.length; i++) {
+      try {
+        const res = await api('/auth/kiro-apikey', {
+          method: 'POST',
+          body: JSON.stringify({ apiKey: keys[i], region: region, nickname: nickname })
+        });
+        const d = await res.json().catch(function () { return {}; });
+        if (res.ok && d.success !== false && !d.error) {
+          ok++;
+          if (!firstId && d.account && d.account.id) firstId = d.account.id;
+        } else {
+          fail++;
+          lastErr = (d && d.error) || ('HTTP ' + res.status);
+        }
+      } catch (e) {
+        fail++;
+        lastErr = String(e && e.message ? e.message : e);
+      }
+    }
+    if (ok > 0) {
+      closeModal();
+      await loadAccounts();
+      await loadStats();
+      toastPrimary((t('apikey.addedCount') || 'Added {0} API key(s)').replace('{0}', String(ok)) + (fail ? (', ' + fail + ' failed') : ''));
+      if (firstId) autoRefreshNewAccount(firstId);
+    } else {
+      toastError((t('common.failed') || 'Failed') + ': ' + lastErr);
+    }
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = t('apikey.add') || t('common.add') || 'Add API Key';
+    }
+  }
+}
+
 
 export function modalAdd(title, body) {
   title.textContent = t('modal.addAccount');
@@ -123,7 +335,7 @@ export function modalBuilderId(title, body) {
   body.innerHTML =
     '<p class="help-block">' + escapeHtml(t('modal.builderIdDesc')) + '</p>' +
     '<div id="builderIdStep1">' +
-    '<div class="form-group"><label>' + escapeHtml(t('detail.region')) + '</label><input type="text" id="builderIdRegion" value="us-east-1" /></div>' +
+    regionSelectHTML('builderIdRegion', 'us-east-1') +
     '<div class="modal-footer">' +
     '<button class="btn btn-secondary" data-modal-goto="add" type="button">' + escapeHtml(t('common.back')) + '</button>' +
     '<button class="btn btn-primary" id="startBuilderIdBtn" type="button">' + escapeHtml(t('builderid.startLogin')) + '</button>' +
@@ -141,6 +353,7 @@ export function modalBuilderId(title, body) {
     '<p id="builderIdStatus" class="text-center text-sm mt-4 muted-text">' + escapeHtml(t('builderid.waiting')) + '</p>' +
     '<div class="modal-footer"><button class="btn btn-secondary" id="builderIdCancelBtn" type="button">' + escapeHtml(t('common.cancel')) + '</button></div>' +
     '</div>';
+  bindRegionSelect(body);
   $('startBuilderIdBtn').addEventListener('click', startBuilderIdLogin);
 }
 export function modalIam(title, body) {
@@ -148,7 +361,7 @@ export function modalIam(title, body) {
   body.innerHTML =
     '<p class="help-block">' + escapeHtml(t('modal.iamDesc')) + '</p>' +
     '<div class="form-group"><label>' + escapeHtml(t('iam.startUrl')) + '</label><input type="text" id="iamStartUrl" placeholder="https://xxx.awsapps.com/start" /></div>' +
-    '<div class="form-group"><label>' + escapeHtml(t('detail.region')) + '</label><input type="text" id="iamRegion" value="us-east-1" /></div>' +
+    regionSelectHTML('iamRegion', 'us-east-1') +
     '<div id="iamStep2" class="hidden">' +
     '<div class="form-group"><label>' + escapeHtml(t('iam.loginUrl')) + '</label>' +
     '<div class="endpoint"><span id="iamAuthUrl" class="font-mono text-xs"></span></div>' +
@@ -164,6 +377,7 @@ export function modalIam(title, body) {
     '<button class="btn btn-secondary" data-modal-goto="add" type="button">' + escapeHtml(t('common.back')) + '</button>' +
     '<button class="btn btn-primary" id="iamBtn" type="button">' + escapeHtml(t('builderid.startLogin')) + '</button>' +
     '</div>';
+  bindRegionSelect(body);
   $('iamBtn').addEventListener('click', startIamSso);
 }
 export function modalEnterpriseSso(title, body) {
@@ -383,12 +597,13 @@ export function modalSso(title, body) {
     '</div>' +
     '<div class="form-group"><label>' + escapeHtml(t('sso.tokenLabel')) + ' <small>' + escapeHtml(t('sso.tokenHint')) + '</small></label>' +
     '<textarea id="ssoToken" placeholder="' + escapeAttr(t('sso.tokenPlaceholder')) + '"></textarea></div>' +
-    '<div class="form-group"><label>' + escapeHtml(t('detail.region')) + '</label><input type="text" id="ssoRegion" value="us-east-1" /></div>' +
+    regionSelectHTML('ssoRegion', 'us-east-1') +
     '<div class="modal-footer">' +
     '<button class="btn btn-secondary" data-modal-goto="add" type="button">' + escapeHtml(t('common.back')) + '</button>' +
     '<button class="btn btn-primary" id="importSsoBtn" type="button">' + escapeHtml(t('common.add')) + '</button>' +
     '</div>';
   $('importSsoBtn').addEventListener('click', importSsoToken);
+  bindRegionSelect(body);
 }
 
 export function modalLocal(title, body) {

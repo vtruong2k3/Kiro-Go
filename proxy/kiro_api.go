@@ -185,6 +185,10 @@ func ResolveProfileArn(account *config.Account) (string, error) {
 	if profileArn := strings.TrimSpace(account.ProfileArn); profileArn != "" {
 		return profileArn, nil
 	}
+	// ksk_ API-key accounts do not use CodeWhisperer profile ARNs.
+	if isKiroAPIKeyAccount(account) {
+		return "", fmt.Errorf("profile ARN resolution skipped: API key auth does not use profile lookup")
+	}
 
 	profileLookupSuppressed := isProfileArnResolutionSuppressed(account)
 	var profileUnsupportedErr error
@@ -407,6 +411,11 @@ func setKiroHeaders(req *http.Request, account *config.Account) {
 
 // RefreshAccountInfo 刷新账户信息（使用量、订阅等）
 func RefreshAccountInfo(account *config.Account) (*config.AccountInfo, error) {
+	// Kiro CLI API-key (ksk_) accounts use management.{region}.kiro.dev — not AWS.
+	if isKiroAPIKeyAccount(account) {
+		return refreshAccountInfoViaKiroDev(account)
+	}
+
 	info := &config.AccountInfo{
 		LastRefresh: time.Now().Unix(),
 	}

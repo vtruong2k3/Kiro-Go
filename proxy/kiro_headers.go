@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"kiro-go/config"
 	"net/http"
+	"strings"
 )
 
 const (
@@ -60,6 +61,8 @@ func applyKiroBaseHeaders(req *http.Request, account *config.Account, values kir
 		req.Header.Set("Authorization", "Bearer "+account.AccessToken)
 	}
 	if tokenType := kiroTokenType(account); tokenType != "" {
+		// net/http canonicalizes the key; upstream treats TokenType case-insensitively.
+		// external_idp → EXTERNAL_IDP; Kiro ksk_ api_key → API_KEY.
 		req.Header.Set("TokenType", tokenType)
 	}
 	req.Header.Set("User-Agent", values.UserAgent)
@@ -70,10 +73,19 @@ func applyKiroBaseHeaders(req *http.Request, account *config.Account, values kir
 	}
 }
 
+// isKiroAPIKeyAccount reports whether the account is a Kiro CLI API-key (ksk_)
+// account. These use management/runtime.{region}.kiro.dev and need no OAuth refresh.
+// Scoped only to AuthMethod == "api_key" so Grok/Codex API keys are never matched.
+func isKiroAPIKeyAccount(account *config.Account) bool {
+	return account != nil && strings.EqualFold(strings.TrimSpace(account.AuthMethod), "api_key")
+}
+
 // kiroTokenType maps an account's auth method to the TokenType header value the
-// Kiro backend expects. This tells the CodeWhisperer/Q backend how to validate
-// the bearer token — external IdP (Microsoft Entra) JWTs are rejected as
-// "invalid" without it. Mirrors KiroIDE's auth-method → TokenType mapping.
+// Kiro backend expects.
+//   - external_idp → EXTERNAL_IDP (Microsoft Entra)
+//   - api_key      → API_KEY (Kiro CLI ksk_ keys on kiro.dev)
+//
+// Other methods omit the header.
 func kiroTokenType(account *config.Account) string {
 	if account == nil {
 		return ""
@@ -81,6 +93,8 @@ func kiroTokenType(account *config.Account) string {
 	switch account.AuthMethod {
 	case "external_idp":
 		return "EXTERNAL_IDP"
+	case "api_key":
+		return "API_KEY"
 	default:
 		return ""
 	}

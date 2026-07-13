@@ -93,6 +93,13 @@ func (h *Handler) handleAccountFailure(account *config.Account, err error) {
 		return
 	}
 
+	// Kiro CLI API-key (ksk_) accounts have no OAuth token to refresh and their
+	// 403s are often transient (region backoff). Soft-fail only; never auto-ban.
+	if isKiroAPIKeyAccount(account) {
+		h.pool.RecordError(account.ID, false)
+		return
+	}
+
 	errMsg := err.Error()
 	switch {
 	case isOverageErrorMessage(errMsg):

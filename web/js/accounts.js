@@ -116,6 +116,7 @@ export function formatAuthMethod(method) {
   if (normalized === 'google') return t('local.providerGoogle');
   if (normalized === 'grok' || normalized === 'xai') return t('provider.grok') || 'Grok / xAI';
   if (normalized === 'codex') return t('provider.codex') || 'OpenAI Codex';
+  if (normalized === 'api_key' || normalized === 'apikey' || normalized === 'api key') return t('auth.apiKey') || 'API Key';
   return method;
 }
 // accountProviderKey buckets an account into one of the sidebar provider

@@ -2503,6 +2503,11 @@ func (h *Handler) sendOpenAIError(w http.ResponseWriter, status int, errType, me
 
 // ensureValidToken 确保 token 有效
 func (h *Handler) ensureValidToken(account *config.Account) error {
+	if account != nil && account.AuthMethod == "api_key" {
+		// Kiro/CodeWhisperer headless API keys are long-lived static credentials.
+		// There is no refresh token and no OIDC refresh path.
+		return nil
+	}
 	if isGrokAccount(account) && account.RefreshToken == "" {
 		// Grok API-key accounts use a static key with no refresh token, so there
 		// is nothing to refresh. Grok Build OAuth accounts DO carry a refresh
@@ -2635,6 +2640,8 @@ func (h *Handler) handleAdminAPI(w http.ResponseWriter, r *http.Request) {
 		h.apiCompleteKiroSso(w, r)
 	case path == "/auth/kiro-sso/cancel" && r.Method == "POST":
 		h.apiCancelKiroSso(w, r)
+	case path == "/auth/kiro-apikey" && r.Method == "POST":
+		h.apiImportKiroAPIKey(w, r)
 	case path == "/auth/antigravity/start" && r.Method == "POST":
 		h.apiStartAntigravity(w, r)
 	case path == "/auth/antigravity/poll" && r.Method == "POST":
@@ -3470,24 +3477,24 @@ func (h *Handler) apiCompleteAntigravity(w http.ResponseWriter, r *http.Request)
 // Shared by the loopback poll flow and the manual paste flow.
 func (h *Handler) persistAntigravityResult(w http.ResponseWriter, result *auth.AntigravityResult) {
 	account := config.Account{
-		ID:           auth.GenerateAccountID(),
-		Email:        result.Email,
-		AccessToken:  result.AccessToken,
-		RefreshToken: result.RefreshToken,
-		AuthMethod:   "antigravity",
-		Provider:     "Antigravity",
-		Scopes:       result.Scopes,
-		ExpiresAt:    time.Now().Unix() + int64(result.ExpiresIn),
-		AGProjectID:  result.ProjectID,
-		AGTier:       result.Tier,
-		AGTierName:   result.TierName,
-		AGQuota:      result.Quota,
-		AGSessionID:  uuid.New().String(),
+		ID:                auth.GenerateAccountID(),
+		Email:             result.Email,
+		AccessToken:       result.AccessToken,
+		RefreshToken:      result.RefreshToken,
+		AuthMethod:        "antigravity",
+		Provider:          "Antigravity",
+		Scopes:            result.Scopes,
+		ExpiresAt:         time.Now().Unix() + int64(result.ExpiresIn),
+		AGProjectID:       result.ProjectID,
+		AGTier:            result.Tier,
+		AGTierName:        result.TierName,
+		AGQuota:           result.Quota,
+		AGSessionID:       uuid.New().String(),
 		SubscriptionType:  antigravityTierToSubscription(result.Tier),
 		SubscriptionTitle: result.TierName,
 		LastRefresh:       time.Now().Unix(),
-		Enabled:      true,
-		MachineId:    config.GenerateMachineId(),
+		Enabled:           true,
+		MachineId:         config.GenerateMachineId(),
 	}
 
 	if err := config.AddAccount(account); err != nil {
@@ -3613,19 +3620,19 @@ func (h *Handler) apiCompleteGrok(w http.ResponseWriter, r *http.Request) {
 // by the loopback poll flow and the manual paste flow.
 func (h *Handler) persistGrokResult(w http.ResponseWriter, result *auth.XaiResult) {
 	account := config.Account{
-		ID:           auth.GenerateAccountID(),
-		Email:        result.Email,
-		AccessToken:  result.AccessToken,
-		RefreshToken: result.RefreshToken,
-		AuthMethod:   "grok",
-		Provider:     "grok",
-		GrokAuthType: "oauth",
-		Scopes:       result.Scopes,
-		ExpiresAt:    time.Now().Unix() + int64(result.ExpiresIn),
+		ID:               auth.GenerateAccountID(),
+		Email:            result.Email,
+		AccessToken:      result.AccessToken,
+		RefreshToken:     result.RefreshToken,
+		AuthMethod:       "grok",
+		Provider:         "grok",
+		GrokAuthType:     "oauth",
+		Scopes:           result.Scopes,
+		ExpiresAt:        time.Now().Unix() + int64(result.ExpiresIn),
 		SubscriptionType: "PRO",
-		LastRefresh:  time.Now().Unix(),
-		Enabled:      true,
-		MachineId:    config.GenerateMachineId(),
+		LastRefresh:      time.Now().Unix(),
+		Enabled:          true,
+		MachineId:        config.GenerateMachineId(),
 	}
 
 	if err := config.AddAccount(account); err != nil {
@@ -3780,23 +3787,23 @@ func (h *Handler) apiImportCodex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	account := config.Account{
-		ID:             auth.GenerateAccountID(),
-		Email:          email,
-		AccessToken:    req.AccessToken,
-		RefreshToken:   strings.TrimSpace(req.RefreshToken),
-		AuthMethod:     "codex",
-		Provider:       "codex",
-		CodexAuthType:  authType,
-		CodexAccountID: accountID,
-		CodexPlanType:  planType,
-		CodexIDToken:   idForClaims,
-		ExpiresAt:      expiresAt,
+		ID:                auth.GenerateAccountID(),
+		Email:             email,
+		AccessToken:       req.AccessToken,
+		RefreshToken:      strings.TrimSpace(req.RefreshToken),
+		AuthMethod:        "codex",
+		Provider:          "codex",
+		CodexAuthType:     authType,
+		CodexAccountID:    accountID,
+		CodexPlanType:     planType,
+		CodexIDToken:      idForClaims,
+		ExpiresAt:         expiresAt,
 		SubscriptionType:  codexPlanToSubscription(planType),
 		SubscriptionTitle: codexPlanToTitle(planType),
-		LastRefresh:    time.Now().Unix(),
-		Weight:         req.Weight,
-		Enabled:        true,
-		MachineId:      config.GenerateMachineId(),
+		LastRefresh:       time.Now().Unix(),
+		Weight:            req.Weight,
+		Enabled:           true,
+		MachineId:         config.GenerateMachineId(),
 	}
 
 	if err := config.AddAccount(account); err != nil {
@@ -4035,6 +4042,71 @@ func (h *Handler) apiImportSsoToken(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *Handler) apiImportKiroAPIKey(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		APIKey   string `json:"apiKey"`
+		Region   string `json:"region"`
+		Nickname string `json:"nickname"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(400)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid JSON"})
+		return
+	}
+
+	// Supports a single key. UI may call this once per line for batch import.
+	cred, err := ValidateKiroAPIKey(req.APIKey, req.Region)
+	if err != nil {
+		w.WriteHeader(400)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	email := strings.TrimSpace(cred.Email)
+	if email == "" {
+		email = "api-key@" + cred.Region
+	}
+
+	account := config.Account{
+		ID:                auth.GenerateAccountID(),
+		Email:             email,
+		UserId:            cred.UserId,
+		Nickname:          strings.TrimSpace(req.Nickname),
+		AccessToken:       cred.AccessToken,
+		AuthMethod:        "api_key",
+		Provider:          "API Key",
+		Region:            cred.Region,
+		ExpiresAt:         0, // static long-lived ksk_ credential
+		Enabled:           true,
+		MachineId:         config.GenerateMachineId(),
+		SubscriptionType:  cred.SubscriptionType,
+		SubscriptionTitle: cred.SubscriptionTitle,
+		UsageCurrent:      cred.UsageCurrent,
+		UsageLimit:        cred.UsageLimit,
+		UsagePercent:      cred.UsagePercent,
+		NextResetDate:     cred.NextResetDate,
+		LastRefresh:       cred.LastRefresh,
+	}
+
+	if err := config.AddAccount(account); err != nil {
+		w.WriteHeader(500)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	h.pool.Reload()
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"account": map[string]interface{}{
+			"id":           account.ID,
+			"email":        account.Email,
+			"authMethod":   account.AuthMethod,
+			"region":       account.Region,
+			"subscription": account.SubscriptionTitle,
+		},
+	})
+}
+
 func (h *Handler) apiImportCredentials(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		AccessToken  string `json:"accessToken"`
@@ -4048,6 +4120,61 @@ func (h *Handler) apiImportCredentials(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.WriteHeader(400)
 		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid JSON"})
+		return
+	}
+
+	// Kiro CLI API-key (ksk_) import — same path as /auth/kiro-apikey, kept here so
+	// clients that post authMethod=api_key to /auth/credentials keep working.
+	// Other auth methods are unchanged below.
+	if strings.EqualFold(strings.TrimSpace(req.AuthMethod), "api_key") {
+		cred, err := ValidateKiroAPIKey(req.AccessToken, req.Region)
+		if err != nil {
+			w.WriteHeader(400)
+			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		email := strings.TrimSpace(cred.Email)
+		if email == "" {
+			email = "api-key@" + cred.Region
+		}
+		provider := strings.TrimSpace(req.Provider)
+		if provider == "" {
+			provider = "API Key"
+		}
+		account := config.Account{
+			ID:                auth.GenerateAccountID(),
+			Email:             email,
+			UserId:            cred.UserId,
+			AccessToken:       cred.AccessToken,
+			AuthMethod:        "api_key",
+			Provider:          provider,
+			Region:            cred.Region,
+			ExpiresAt:         0,
+			Enabled:           true,
+			MachineId:         config.GenerateMachineId(),
+			SubscriptionType:  cred.SubscriptionType,
+			SubscriptionTitle: cred.SubscriptionTitle,
+			UsageCurrent:      cred.UsageCurrent,
+			UsageLimit:        cred.UsageLimit,
+			UsagePercent:      cred.UsagePercent,
+			NextResetDate:     cred.NextResetDate,
+			LastRefresh:       cred.LastRefresh,
+		}
+		if err := config.AddAccount(account); err != nil {
+			w.WriteHeader(500)
+			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		h.pool.Reload()
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"account": map[string]interface{}{
+				"id":           account.ID,
+				"email":        account.Email,
+				"region":       account.Region,
+				"subscription": account.SubscriptionTitle,
+			},
+		})
 		return
 	}
 

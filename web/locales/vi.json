@@ -655,5 +655,22 @@
   "security.unblocked": "Đã bỏ chặn IP",
   "security.invalidIP": "Địa chỉ IP không hợp lệ",
   "logs.ip": "IP",
-  "logs.apiKey": "API Key"
+  "logs.apiKey": "API Key",
+  "modal.apiKeyTitle": "Kiro API Key",
+  "modal.apiKeyDesc": "Thêm tài khoản bằng Kiro CLI API key (ksk_…). Mỗi dòng một key để nhập hàng loạt. Không cần SSO.",
+  "apikey.keyLabel": "API Key",
+  "apikey.keyPlaceholder": "ksk_...",
+  "apikey.keyHint": "Xác thực qua management.{region}.kiro.dev. Để trống region để tự dò vùng.",
+  "apikey.nicknamePlaceholder": "Tên hiển thị (tuỳ chọn)",
+  "apikey.add": "Thêm API Key",
+  "apikey.validating": "Đang kiểm tra...",
+  "region.add": "Thêm",
+  "region.hint": "Chọn AWS region, hoặc thêm region tùy chỉnh (vd: eu-central-1).",
+  "region.invalid": "Region AWS không hợp lệ (vd: us-east-1, eu-central-1)",
+  "region.added": "Đã thêm region",
+  "auth.apiKey": "API Key",
+  "detail.nickname": "Biệt danh",
+  "apikey.addedCount": "Đã thêm {0} API key",
+  "region.auto": "— tự dò vùng —",
+  "region.hintApiKey": "Để tự dò, hoặc chọn/thêm region (vd: eu-central-1)."
 }

@@ -1,11 +1,40 @@
 .git
 .github
-Kiro-Go
+.claude
+.kiro
+.zeabur
+
+# Local reference trees / forks (not part of the image)
 9router
+9router/
+Kiro-Go
+Kiro-Go/
+Kiro-Go-ApiKey
+Kiro-Go-ApiKey/
+
+# Runtime & local data
 data
+data/
 backup*
-PR-*.md
+*.log
+
+# Build artifacts / local binaries
+kiro-go
+kiro-go.exe
+kiro-go.exe~
+*.exe
+*.test
+*.out
+
+# Docs / compose (not needed in image build context)
 docker-compose.yml
 README.md
 README_CN.md
-*.log
+docs
+PR-*.md
+
+# Editor / OS
+.idea
+.vscode
+.DS_Store
+Thumbs.db

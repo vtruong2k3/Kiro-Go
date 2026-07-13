@@ -32,6 +32,12 @@ func RefreshToken(account *config.Account) (string, string, int64, string, error
 	}
 	client := GetAuthClientForProxy(proxyURL)
 
+	// Headless CodeWhisperer/Kiro API keys are static long-lived credentials.
+	// They have no refresh token and must never hit OIDC/social refresh paths.
+	if account.AuthMethod == "api_key" {
+		return "", "", 0, "", fmt.Errorf("api_key credentials cannot be refreshed")
+	}
+
 	// Antigravity (Google Cloud Code / Gemini) accounts refresh against Google's
 	// OAuth2 token endpoint (refresh_token grant, hardcoded public client). They
 	// have no AWS profileArn, so "" is returned for it.

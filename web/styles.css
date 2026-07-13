@@ -5179,3 +5179,34 @@ img.brand-icon {
     transition: none;
   }
 }
+
+/* Region select with custom "Add" control (API key / OIDC login modals) */
+.region-select-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: stretch;
+}
+.region-select-row > select,
+.region-select-row > .custom-select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.region-select-row > .btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.region-add-row {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+  align-items: center;
+}
+.region-add-row input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.region-add-row .btn {
+  flex: 0 0 auto;
+}
+
+.text-danger { color: var(--danger, #ef4444); }
