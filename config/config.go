@@ -17,6 +17,7 @@ import (
 	"os"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -330,7 +331,35 @@ var (
 	cfg     *Config
 	cfgLock sync.RWMutex
 	cfgPath string
+
+	// dirty is set by hot-path stat updaters (RecordApiKeyUsage, UpdateAccountStats,
+	// UpdateStats) that mutate cfg in memory but skip the expensive full-file write.
+	// A background flusher calls FlushIfDirty periodically to persist in one batched
+	// write instead of writing config.json on every request.
+	dirty atomic.Bool
 )
+
+// markDirty flags that in-memory cfg has unsaved changes. Caller need not hold cfgLock.
+func markDirty() {
+	dirty.Store(true)
+}
+
+// FlushIfDirty persists cfg to disk only if a hot-path updater marked it dirty since
+// the last flush. It is safe to call frequently; when nothing changed it is a no-op.
+// The dirty flag is cleared before writing so a concurrent update during the write is
+// not lost (it re-marks dirty and gets picked up on the next flush).
+func FlushIfDirty() error {
+	if !dirty.CompareAndSwap(true, false) {
+		return nil
+	}
+	cfgLock.Lock()
+	defer cfgLock.Unlock()
+	if err := saveLocked(); err != nil {
+		dirty.Store(true) // retry on next flush
+		return err
+	}
+	return nil
+}
 
 // Init initializes the configuration system with the specified file path.
 // If the file doesn't exist, a default configuration is created.
@@ -426,12 +455,25 @@ func newUUID() string {
 
 // Save persists the current configuration to the JSON file.
 // Uses indented formatting for human readability.
+//
+// The write is atomic: data is written to a sibling temp file first, then
+// renamed over cfgPath (rename is atomic on the same filesystem). This ensures
+// a crash or full disk mid-write cannot truncate/corrupt config.json and lose
+// all accounts + tokens; readers always see either the old or the new complete file.
 func Save() error {
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(cfgPath, data, 0600)
+	tmpPath := cfgPath + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, cfgPath); err != nil {
+		os.Remove(tmpPath) // best-effort cleanup; don't mask the rename error
+		return err
+	}
+	return nil
 }
 
 // SetPassword updates the admin password.
@@ -708,7 +750,8 @@ func UpdateStats(totalReq, successReq, failedReq, totalTokens int, totalCredits 
 	cfg.FailedRequests = failedReq
 	cfg.TotalTokens = totalTokens
 	cfg.TotalCredits = totalCredits
-	return Save()
+	markDirty()
+	return nil
 }
 
 func GetStats() (int, int, int, int, float64) {
@@ -727,7 +770,8 @@ func UpdateAccountStats(id string, requestCount, errorCount, totalTokens int, to
 			cfg.Accounts[i].TotalTokens = totalTokens
 			cfg.Accounts[i].TotalCredits = totalCredits
 			cfg.Accounts[i].LastUsed = lastUsed
-			return Save()
+			markDirty()
+			return nil
 		}
 	}
 	return nil

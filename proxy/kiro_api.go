@@ -185,10 +185,6 @@ func ResolveProfileArn(account *config.Account) (string, error) {
 	if profileArn := strings.TrimSpace(account.ProfileArn); profileArn != "" {
 		return profileArn, nil
 	}
-	// ksk_ API-key accounts do not use CodeWhisperer profile ARNs.
-	if isKiroAPIKeyAccount(account) {
-		return "", fmt.Errorf("profile ARN resolution skipped: API key auth does not use profile lookup")
-	}
 
 	profileLookupSuppressed := isProfileArnResolutionSuppressed(account)
 	var profileUnsupportedErr error

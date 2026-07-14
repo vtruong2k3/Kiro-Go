@@ -59,7 +59,12 @@ type Handler struct {
 	modelsCacheMu   sync.RWMutex
 	modelsCacheTime int64
 	promptCache     *promptCacheTracker
-	tokenRefreshMu  sync.Mutex
+	// Per-account token refresh serialization. tokenRefreshRegMu guards the map
+	// only (held for a map lookup, never across the network refresh), so refreshes
+	// for different accounts run concurrently while duplicate refreshes for the
+	// same account still serialize on that account's own mutex.
+	tokenRefreshRegMu sync.Mutex
+	tokenRefreshLocks map[string]*sync.Mutex
 	// 请求日志 (环形缓冲区，包含成功和失败)
 	requestLogs   []RequestLog
 	requestLogsMu sync.RWMutex
@@ -258,6 +263,7 @@ func NewHandler() *Handler {
 		stopRuntime:     make(chan struct{}),
 		promptCache:     newPromptCacheTracker(defaultPromptCacheTTL),
 		ipTrack:         newIPTracker(),
+		tokenRefreshLocks: make(map[string]*sync.Mutex),
 	}
 
 	// Runtime SQLite (logs + key IP lifetime). Fail-open on error.
@@ -1593,6 +1599,11 @@ func (h *Handler) flushKeyIPStats() {
 }
 
 // saveStats 保存统计到配置文件
+//
+// UpdateStats only mutates cfg in memory and marks it dirty; the actual disk write
+// is batched here via FlushIfDirty. This also persists any hot-path updates from
+// RecordApiKeyUsage / UpdateAccountStats accumulated since the last flush, so the
+// full config.json is written at most once per tick instead of once per request.
 func (h *Handler) saveStats() {
 	config.UpdateStats(
 		int(atomic.LoadInt64(&h.totalRequests)),
@@ -1601,6 +1612,9 @@ func (h *Handler) saveStats() {
 		int(atomic.LoadInt64(&h.totalTokens)),
 		h.getCredits(),
 	)
+	if err := config.FlushIfDirty(); err != nil {
+		logger.Warnf("flush config stats: %v", err)
+	}
 }
 
 // getCredits 线程安全获取 credits
@@ -2501,6 +2515,21 @@ func (h *Handler) sendOpenAIError(w http.ResponseWriter, status int, errType, me
 	})
 }
 
+// accountRefreshLock returns the per-account mutex used to serialize token
+// refreshes for a single account, creating it on first use. tokenRefreshRegMu is
+// held only for the map lookup, never across the network refresh, so refreshes
+// for different accounts proceed concurrently.
+func (h *Handler) accountRefreshLock(id string) *sync.Mutex {
+	h.tokenRefreshRegMu.Lock()
+	defer h.tokenRefreshRegMu.Unlock()
+	mu := h.tokenRefreshLocks[id]
+	if mu == nil {
+		mu = &sync.Mutex{}
+		h.tokenRefreshLocks[id] = mu
+	}
+	return mu
+}
+
 // ensureValidToken 确保 token 有效
 func (h *Handler) ensureValidToken(account *config.Account) error {
 	if account != nil && account.AuthMethod == "api_key" {
@@ -2524,8 +2553,9 @@ func (h *Handler) ensureValidToken(account *config.Account) error {
 		return nil
 	}
 
-	h.tokenRefreshMu.Lock()
-	defer h.tokenRefreshMu.Unlock()
+	mu := h.accountRefreshLock(account.ID)
+	mu.Lock()
+	defer mu.Unlock()
 
 	// Another concurrent request may have refreshed this account while we waited.
 	if latest := h.pool.GetByID(account.ID); latest != nil {

@@ -3,6 +3,7 @@
 /9router
 /kiro-go.exe
 /Kiro-Go-ApiKey
+/kirogo-api
 *.exe
 *.test
 *.out

@@ -37,6 +37,8 @@ Base URL trong các ví dụ: `http://localhost:8080`.
 | `requestsCount` | int64   | Số request đã thực hiện                                       |
 | `expiresAt`     | int64   | Unix giây, thời điểm hết hạn (0 = vĩnh viễn)                  |
 | `expired`       | bool    | `true` khi `expiresAt > 0 && now >= expiresAt`               |
+| `uniqueIps`     | int     | Số IP khác nhau đã dùng key (chỉ có ở list; bỏ qua khi 0)    |
+| `rpm`           | int64   | Request/phút hiện tại của key (RAM-only; bỏ qua khi 0)       |
 
 > **Key thật (`sk-...`) được trả về khi tạo** (`POST`). List/get chỉ có `keyMasked`. Có thể lấy lại cleartext qua `GET /admin/api/api-keys/{id}/reveal` (cần admin password).
 
@@ -189,6 +191,44 @@ Response `200`: `{"success": true}`. Idempotent (xoá id không tồn tại vẫ
 curl -X POST http://localhost:8080/admin/api/api-keys/b3f1.../reset-usage \
   -H "X-Admin-Password: $ADMIN_PW"
 ```
+
+### 7. Thống kê IP của key — `GET /admin/api/api-keys/{id}/ips`
+
+Liệt kê các IP client đã dùng key này. Số liệu IP theo vòng đời được lưu vào SQLite; `rpm` là chỉ số RAM-only (không lưu, reset khi restart).
+
+```bash
+curl http://localhost:8080/admin/api/api-keys/$ID/ips \
+  -H "X-Admin-Password: $ADMIN_PW"
+```
+
+Response `200`:
+```json
+{
+  "ips": [
+    {
+      "ip": "203.0.113.7",
+      "requests": 42,
+      "firstSeen": 1751449200,
+      "lastSeen": 1751452800,
+      "rpm": 3
+    }
+  ],
+  "uniqueCount": 1,
+  "rpm": 3
+}
+```
+
+| Field         | Kiểu   | Ý nghĩa                                          |
+|---------------|--------|--------------------------------------------------|
+| `ips[].ip`    | string | Địa chỉ IP client                                |
+| `ips[].requests` | int64 | Tổng request từ IP này (tích luỹ)             |
+| `ips[].firstSeen`| int64 | Unix giây, lần đầu thấy IP                    |
+| `ips[].lastSeen` | int64 | Unix giây, lần cuối thấy IP                   |
+| `ips[].rpm`   | int64  | Request/phút hiện tại của riêng IP (RAM-only)    |
+| `uniqueCount` | int    | Số IP khác nhau                                  |
+| `rpm`         | int64  | Tổng request/phút hiện tại của key               |
+
+`400` nếu thiếu id, `404` nếu id không tồn tại.
 
 ---
 

@@ -157,8 +157,10 @@ func HasApiKeys() bool {
 	return len(cfg.ApiKeys) > 0
 }
 
-// RecordApiKeyUsage atomically adds tokens and credits to the entry's counters,
-// updates LastUsedAt, increments RequestsCount, and persists.
+// RecordApiKeyUsage adds tokens and credits to the entry's counters, updates
+// LastUsedAt, and increments RequestsCount in memory. It marks cfg dirty instead
+// of writing to disk; a background flusher (FlushIfDirty) batches the write so
+// this stays cheap on the per-request hot path.
 func RecordApiKeyUsage(id string, tokens int64, credits float64) error {
 	cfgLock.Lock()
 	defer cfgLock.Unlock()
@@ -175,7 +177,8 @@ func RecordApiKeyUsage(id string, tokens int64, credits float64) error {
 			}
 			cfg.ApiKeys[i].RequestsCount++
 			cfg.ApiKeys[i].LastUsedAt = time.Now().Unix()
-			return saveLocked()
+			markDirty()
+			return nil
 		}
 	}
 	return errors.New("api key not found")

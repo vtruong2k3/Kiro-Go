@@ -393,12 +393,6 @@ func CallKiroAPI(account *config.Account, payload *KiroPayload, callback *KiroSt
 		callback = &wrapped
 	}
 
-	// Kiro CLI API-key (ksk_) accounts use runtime.{region}.kiro.dev only.
-	// Do not fall through to AWS CodeWhisperer/Q endpoints or profileArn lookup.
-	if isKiroAPIKeyAccount(account) {
-		return callKiroAPIKeyRuntime(account, payload, callback)
-	}
-
 	if payload != nil && strings.TrimSpace(payload.ProfileArn) == "" {
 		if profileArn, err := ResolveProfileArn(account); err == nil {
 			payload.ProfileArn = profileArn
