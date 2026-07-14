@@ -275,54 +275,6 @@ type KiroStreamCallback struct {
 
 // ==================== API Call ====================
 
-// callKiroAPIKeyRuntime sends a generateAssistantResponse request to the Kiro
-// CLI runtime host for api_key (ksk_) accounts. Scoped exclusively to that auth
-// method so other providers are untouched.
-func callKiroAPIKeyRuntime(account *config.Account, payload *KiroPayload, callback *KiroStreamCallback) error {
-	if payload == nil {
-		return fmt.Errorf("payload is nil")
-	}
-	region := kiroRegion(account)
-	epURL := "https://runtime." + region + ".kiro.dev/generateAssistantResponse"
-	payload.ConversationState.CurrentMessage.UserInputMessage.Origin = "AI_EDITOR"
-	// API keys do not carry / require a profile ARN.
-	payload.ProfileArn = ""
-
-	reqBody, _ := json.Marshal(payload)
-	if logger.GetLevel() == logger.LevelDebug {
-		logger.Debugf("[KiroAPI] API-key runtime payload: %s", string(reqBody))
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	req, err := http.NewRequestWithContext(ctx, "POST", epURL, bytes.NewReader(reqBody))
-	if err != nil {
-		cancel()
-		return err
-	}
-	host := "runtime." + region + ".kiro.dev"
-	headerValues := buildStreamingHeaderValues(account, host)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "*/*")
-	applyKiroBaseHeaders(req, account, headerValues)
-	req.Header.Set("Amz-Sdk-Request", "attempt=1; max=3")
-	req.Header.Set("Amz-Sdk-Invocation-Id", uuid.New().String())
-
-	resp, err := GetClientForProxy(ResolveAccountProxyURL(account)).Do(req)
-	if err != nil {
-		cancel()
-		return err
-	}
-	if resp.StatusCode != 200 {
-		errBody, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		cancel()
-		return fmt.Errorf("HTTP %d from Kiro Runtime: %s", resp.StatusCode, string(errBody))
-	}
-	err = parseEventStream(resp.Body, callback)
-	resp.Body.Close()
-	cancel()
-	return err
-}
-
 func setPayloadProfileArnForAccount(payload *KiroPayload, account *config.Account) {
 	if payload == nil {
 		return

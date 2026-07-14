@@ -185,6 +185,14 @@ func ResolveProfileArn(account *config.Account) (string, error) {
 	if profileArn := strings.TrimSpace(account.ProfileArn); profileArn != "" {
 		return profileArn, nil
 	}
+	// ksk_ API-key accounts cannot list CodeWhisperer profiles (ListAvailableProfiles
+	// returns empty for API_KEY tokens). AWS accepts generateAssistantResponse /
+	// ListAvailableModels for these accounts without a profileArn — the API_KEY
+	// TokenType header is sufficient. Return a soft error so callers continue
+	// without a profile ARN instead of failing the request.
+	if isKiroAPIKeyAccount(account) {
+		return "", fmt.Errorf("profile ARN resolution skipped: API key auth does not use profile lookup")
+	}
 
 	profileLookupSuppressed := isProfileArnResolutionSuppressed(account)
 	var profileUnsupportedErr error
