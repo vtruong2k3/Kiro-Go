@@ -27,7 +27,7 @@ if (localStorage.getItem('kiro_remember') !== '1') {
 // bindings are read-only; object properties can be reassigned).
 export const state = {
   password: sessionStorage.getItem('admin_password') || localStorage.getItem('admin_password') || '',
-  currentLang: localStorage.getItem('kiro_lang') || 'zh',
+  currentLang: localStorage.getItem('kiro_lang') || 'vi',
   accountsData: [],
   filterKeyword: '',
   filterStatus: 'all',

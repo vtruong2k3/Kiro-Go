@@ -379,14 +379,8 @@ func CallKiroAPI(account *config.Account, payload *KiroPayload, callback *KiroSt
 	}
 	setPayloadProfileArnForAccount(payload, account)
 
-	// Kiro CLI API-key (ksk_) accounts use runtime.{region}.kiro.dev only.
-	// Do not fall through to AWS CodeWhisperer/Q endpoints or profileArn lookup.
-	if isKiroAPIKeyAccount(account) {
-		return callKiroAPIKeyRuntime(account, payload, callback)
-	}
-
 	// Wrap OnToolUse to restore original tool names for the client.
-	if callback != nil && callback.OnToolUse != nil && len(payload.ToolNameMap) > 0 {
+	if callback != nil && callback.OnToolUse != nil && payload != nil && len(payload.ToolNameMap) > 0 {
 		originalOnToolUse := callback.OnToolUse
 		nameMap := payload.ToolNameMap
 		wrapped := *callback
@@ -397,6 +391,12 @@ func CallKiroAPI(account *config.Account, payload *KiroPayload, callback *KiroSt
 			originalOnToolUse(tu)
 		}
 		callback = &wrapped
+	}
+
+	// Kiro CLI API-key (ksk_) accounts use runtime.{region}.kiro.dev only.
+	// Do not fall through to AWS CodeWhisperer/Q endpoints or profileArn lookup.
+	if isKiroAPIKeyAccount(account) {
+		return callKiroAPIKeyRuntime(account, payload, callback)
 	}
 
 	if payload != nil && strings.TrimSpace(payload.ProfileArn) == "" {
