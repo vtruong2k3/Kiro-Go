@@ -145,6 +145,11 @@ function fmtDate(ts) {
   if (!ts) return '—';
   return new Date(ts * 1000).toLocaleString('vi-VN');
 }
+// expiresAt lưu là 00:00 ngày kế tiếp; lùi 1s để về đúng ngày hết hạn (giống admin).
+function fmtExpiry(ts) {
+  if (!ts) return '—';
+  return new Date(ts * 1000 - 1000).toLocaleDateString('vi-VN');
+}
 function fmtDuration(ms) {
   if (!ms) return '—';
   if (ms < 1000) return ms + ' ms';
@@ -212,7 +217,7 @@ function expiryCard(data) {
     : `<span class="pill ${data.daysRemaining <= 3 ? 'warn' : 'ok'}">Còn ${data.daysRemaining} ngày</span>`;
   return `<div class="card">
     <div class="label">Hạn sử dụng</div>
-    <div class="value" style="font-size:1.1rem">${fmtDate(data.expiresAt)}</div>
+    <div class="value" style="font-size:1.1rem">${fmtExpiry(data.expiresAt)}</div>
     <div style="margin-top:8px">${pill}</div>
   </div>`;
 }
