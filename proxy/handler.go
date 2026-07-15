@@ -542,6 +542,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(path, "/admin/"):
 		h.serveStaticFile(w, r)
 
+	// 公开的 Key 查询页面（无需管理员密码，凭 Key 自身鉴权）
+	case path == "/check" || path == "/check/" || path == "/check/key":
+		h.serveStatic(w, r, "web/check.html")
+	case path == "/check/api/lookup" && r.Method == "POST":
+		h.handleCheckKeyLookup(w, r)
+
 	// 健康检查
 	case path == "/health" || path == "/":
 		h.handleHealth(w, r)

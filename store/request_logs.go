@@ -101,6 +101,43 @@ LIMIT ?`, limit)
 	return out, nil
 }
 
+// LoadRequestLogsByApiKeyID returns up to limit rows for one API key, newest→oldest.
+// Reads the full SQLite history (not just the RAM ring buffer). Empty on nil store,
+// empty apiKeyID, or limit <= 0.
+func (s *Store) LoadRequestLogsByApiKeyID(apiKeyID string, limit int) ([]RequestLogRow, error) {
+	if s == nil || s.db == nil || apiKeyID == "" || limit <= 0 {
+		return nil, nil
+	}
+
+	rows, err := s.db.Query(`
+SELECT ts, endpoint, model, account_id, status, error, error_type,
+       tokens, credits, duration_ms, client_ip, api_key_id
+FROM request_logs
+WHERE api_key_id = ?
+ORDER BY id DESC
+LIMIT ?`, apiKeyID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("store: load logs by api key: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]RequestLogRow, 0, limit)
+	for rows.Next() {
+		var r RequestLogRow
+		if err := rows.Scan(
+			&r.Time, &r.Endpoint, &r.Model, &r.AccountID, &r.Status, &r.Error, &r.ErrorType,
+			&r.Tokens, &r.Credits, &r.Duration, &r.ClientIP, &r.ApiKeyID,
+		); err != nil {
+			return nil, fmt.Errorf("store: scan log by api key: %w", err)
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ClearRequestLogs deletes all persisted request logs.
 func (s *Store) ClearRequestLogs() error {
 	if s == nil || s.db == nil {
