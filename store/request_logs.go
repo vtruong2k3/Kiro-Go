@@ -19,6 +19,9 @@ type RequestLogRow struct {
 	Duration  int64
 	ClientIP  string
 	ApiKeyID  string
+	// Provider is the real upstream that served the request (kiro/grok/codex/...).
+	// Admin-only; never exposed on the public check-key page.
+	Provider string
 }
 
 // InsertRequestLogs appends rows in a single transaction. No-op on nil store or empty input.
@@ -38,8 +41,8 @@ func (s *Store) InsertRequestLogs(rows []RequestLogRow) error {
 	stmt, err := tx.Prepare(`
 INSERT INTO request_logs(
   ts, endpoint, model, account_id, status, error, error_type,
-  tokens, credits, duration_ms, client_ip, api_key_id
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+  tokens, credits, duration_ms, client_ip, api_key_id, provider
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return fmt.Errorf("store: prepare insert logs: %w", err)
 	}
@@ -48,7 +51,7 @@ INSERT INTO request_logs(
 	for _, r := range rows {
 		if _, err := stmt.Exec(
 			r.Time, r.Endpoint, r.Model, r.AccountID, r.Status, r.Error, r.ErrorType,
-			r.Tokens, r.Credits, r.Duration, r.ClientIP, r.ApiKeyID,
+			r.Tokens, r.Credits, r.Duration, r.ClientIP, r.ApiKeyID, r.Provider,
 		); err != nil {
 			return fmt.Errorf("store: insert log: %w", err)
 		}
@@ -69,7 +72,7 @@ func (s *Store) LoadRecentRequestLogs(limit int) ([]RequestLogRow, error) {
 	// Fetch newest first, then reverse for ring order.
 	rows, err := s.db.Query(`
 SELECT ts, endpoint, model, account_id, status, error, error_type,
-       tokens, credits, duration_ms, client_ip, api_key_id
+       tokens, credits, duration_ms, client_ip, api_key_id, provider
 FROM request_logs
 ORDER BY id DESC
 LIMIT ?`, limit)
@@ -83,7 +86,7 @@ LIMIT ?`, limit)
 		var r RequestLogRow
 		if err := rows.Scan(
 			&r.Time, &r.Endpoint, &r.Model, &r.AccountID, &r.Status, &r.Error, &r.ErrorType,
-			&r.Tokens, &r.Credits, &r.Duration, &r.ClientIP, &r.ApiKeyID,
+			&r.Tokens, &r.Credits, &r.Duration, &r.ClientIP, &r.ApiKeyID, &r.Provider,
 		); err != nil {
 			return nil, fmt.Errorf("store: scan log: %w", err)
 		}
@@ -111,7 +114,7 @@ func (s *Store) LoadRequestLogsByApiKeyID(apiKeyID string, limit int) ([]Request
 
 	rows, err := s.db.Query(`
 SELECT ts, endpoint, model, account_id, status, error, error_type,
-       tokens, credits, duration_ms, client_ip, api_key_id
+       tokens, credits, duration_ms, client_ip, api_key_id, provider
 FROM request_logs
 WHERE api_key_id = ?
 ORDER BY id DESC
@@ -126,7 +129,7 @@ LIMIT ?`, apiKeyID, limit)
 		var r RequestLogRow
 		if err := rows.Scan(
 			&r.Time, &r.Endpoint, &r.Model, &r.AccountID, &r.Status, &r.Error, &r.ErrorType,
-			&r.Tokens, &r.Credits, &r.Duration, &r.ClientIP, &r.ApiKeyID,
+			&r.Tokens, &r.Credits, &r.Duration, &r.ClientIP, &r.ApiKeyID, &r.Provider,
 		); err != nil {
 			return nil, fmt.Errorf("store: scan log by api key: %w", err)
 		}

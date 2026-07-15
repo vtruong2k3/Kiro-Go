@@ -133,11 +133,16 @@ func (h *Handler) handleResponsesNonStream(
 	var lastErr error
 	reqStart := time.Now()
 
-	for attempt := 0; attempt < maxAccountRetryAttempts; attempt++ {
-		account := h.pool.GetNextForModelExcluding(model, excluded)
+	nativeDone := false
+	nativeAttempts := 0
+	fallbackIdx := 0
+	fallbackAttempts := 0
+	for attempt := 0; attempt < maxAttemptsForModel(model); attempt++ {
+		account, _ := nextAccountForAttempt(h.pool, model, payload, excluded, &nativeDone, &nativeAttempts, &fallbackIdx, &fallbackAttempts)
 		if account == nil {
 			break
 		}
+		usedProvider := providerLabel(account)
 		if err := h.ensureValidToken(account); err != nil {
 			lastErr = err
 			excluded[account.ID] = true
@@ -187,10 +192,11 @@ func (h *Handler) handleResponsesNonStream(
 		}
 		outputTokens = estimateOpenAIOutputTokens(finalContent, reasoningContent, toolUses)
 
-		h.recordSuccessForApiKey(apiKeyID, inputTokens, outputTokens, credits)
+		billedTokens, credits := billUsage(credits, model, inputTokens, outputTokens)
+		h.recordSuccessForApiKey(apiKeyID, billedTokens, credits)
 		h.pool.RecordSuccess(account.ID)
-		h.pool.UpdateStats(account.ID, inputTokens+outputTokens, credits)
-		h.recordSuccessLogMeta("responses", model, account.ID, inputTokens+outputTokens, credits, time.Since(reqStart).Milliseconds(), clientIP, apiKeyID)
+		h.pool.UpdateStats(account.ID, billedTokens, credits)
+		h.recordSuccessLogMeta("responses", model, account.ID, billedTokens, credits, time.Since(reqStart).Milliseconds(), clientIP, apiKeyID, usedProvider)
 
 		respObj := buildResponsesObject(respID, model, finalContent, toolUses, inputTokens, outputTokens, req)
 		respObj.StoredInput = storedInput
@@ -211,7 +217,7 @@ func (h *Handler) handleResponsesNonStream(
 		h.sendOpenAIError(w, 503, "server_error", "No available accounts")
 		return
 	}
-	h.recordFailureWithDetailsMeta("responses", model, "", lastErr, clientIP, apiKeyID)
+	h.recordFailureWithDetailsMeta("responses", model, "", lastErr, clientIP, apiKeyID, "")
 	h.sendOpenAIError(w, 500, "server_error", lastErr.Error())
 }
 
@@ -318,11 +324,16 @@ func (h *Handler) handleResponsesStream(
 	responseStarted := false
 	reqStart := time.Now()
 
-	for attempt := 0; attempt < maxAccountRetryAttempts; attempt++ {
-		account := h.pool.GetNextForModelExcluding(model, excluded)
+	nativeDone := false
+	nativeAttempts := 0
+	fallbackIdx := 0
+	fallbackAttempts := 0
+	for attempt := 0; attempt < maxAttemptsForModel(model); attempt++ {
+		account, _ := nextAccountForAttempt(h.pool, model, payload, excluded, &nativeDone, &nativeAttempts, &fallbackIdx, &fallbackAttempts)
 		if account == nil {
 			break
 		}
+		usedProvider := providerLabel(account)
 		if err := h.ensureValidToken(account); err != nil {
 			lastErr = err
 			excluded[account.ID] = true
@@ -490,7 +501,7 @@ func (h *Handler) handleResponsesStream(
 					},
 				},
 			})
-			h.recordFailureWithDetailsMeta("responses", model, account.ID, err, clientIP, apiKeyID)
+			h.recordFailureWithDetailsMeta("responses", model, account.ID, err, clientIP, apiKeyID, usedProvider)
 			return
 		}
 
@@ -534,10 +545,11 @@ func (h *Handler) handleResponsesStream(
 		}
 		outputTokens = estimateOpenAIOutputTokens(finalContent, reasoning, toolUses)
 
-		h.recordSuccessForApiKey(apiKeyID, inputTokens, outputTokens, credits)
+		billedTokens, credits := billUsage(credits, model, inputTokens, outputTokens)
+		h.recordSuccessForApiKey(apiKeyID, billedTokens, credits)
 		h.pool.RecordSuccess(account.ID)
-		h.pool.UpdateStats(account.ID, inputTokens+outputTokens, credits)
-		h.recordSuccessLogMeta("responses", model, account.ID, inputTokens+outputTokens, credits, time.Since(reqStart).Milliseconds(), clientIP, apiKeyID)
+		h.pool.UpdateStats(account.ID, billedTokens, credits)
+		h.recordSuccessLogMeta("responses", model, account.ID, billedTokens, credits, time.Since(reqStart).Milliseconds(), clientIP, apiKeyID, usedProvider)
 
 		respObj := buildResponsesObject(respID, model, finalContent, toolUses, inputTokens, outputTokens, req)
 		respObj.CreatedAt = createdAt
@@ -573,7 +585,7 @@ func (h *Handler) handleResponsesStream(
 		})
 		return
 	}
-	h.recordFailureWithDetailsMeta("responses", model, "", lastErr, clientIP, apiKeyID)
+	h.recordFailureWithDetailsMeta("responses", model, "", lastErr, clientIP, apiKeyID, "")
 	send("response.failed", map[string]interface{}{
 		"type": "response.failed",
 		"response": map[string]interface{}{

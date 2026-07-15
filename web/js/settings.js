@@ -28,7 +28,7 @@ export async function loadSettings() {
   const d = await res.json();
   $('requireApiKey').checked = d.requireApiKey;
   $('allowOverUsage').checked = d.allowOverUsage || false;
-  await Promise.all([loadThinkingConfig(), loadEndpointConfig(), loadProxyConfig(), loadPromptFilter(), loadApiKeys(), loadSecuritySettings()]);
+  await Promise.all([loadThinkingConfig(), loadEndpointConfig(), loadProxyConfig(), loadPromptFilter(), loadBillingConfig(), loadApiKeys(), loadSecuritySettings()]);
   refreshCustomSelects();
 }
 export async function loadThinkingConfig() {
@@ -1477,4 +1477,116 @@ export function renderPromptRules() {
 export function addPromptRule(type) {
   state.promptRules.push({ id: 'rule-' + Date.now(), name: '', type, match: '', replace: '', enabled: true });
   renderPromptRules();
+}
+
+// Billing (token multiplier + model credit rates)
+export async function loadBillingConfig() {
+  try {
+    const res = await api('/billing');
+    const d = await res.json();
+    const mult = d.tokenUsageMultiplier != null ? d.tokenUsageMultiplier : 1;
+    const multEl = $('tokenUsageMultiplier');
+    if (multEl) multEl.value = String(mult);
+    state.builtinDefaultRate = d.builtinDefaultRate != null ? d.builtinDefaultRate : 0.003;
+    const rates = d.modelCreditRates || {};
+    const rows = Object.keys(rates).sort((a, b) => {
+      if (a.toLowerCase() === 'default') return -1;
+      if (b.toLowerCase() === 'default') return 1;
+      return a.localeCompare(b);
+    }).map(model => ({ model, rate: rates[model] }));
+    if (!rows.some(r => String(r.model || '').toLowerCase() === 'default')) {
+      rows.unshift({ model: 'default', rate: state.builtinDefaultRate });
+    }
+    state.creditRates = rows;
+    renderCreditRateRows();
+  } catch (e) {
+    state.creditRates = [{ model: 'default', rate: state.builtinDefaultRate || 0.003 }];
+    renderCreditRateRows();
+  }
+}
+
+export function renderCreditRateRows() {
+  const c = $('creditRateRows');
+  if (!c) return;
+  if (!state.creditRates.length) {
+    c.innerHTML = '<small class="text-xs muted-text">' + escapeHtml(t('settings.creditRatesEmpty')) + '</small>';
+    return;
+  }
+  c.innerHTML = state.creditRates.map((r, i) => {
+    return '<div class="rule-card">' +
+      '<div class="rule-header">' +
+      '<div class="rule-meta" style="flex:1">' +
+      '<span class="rule-type">' + escapeHtml(t('settings.creditRateModel')) + '</span>' +
+      '</div>' +
+      '<button class="rule-remove" data-credit-rate-remove="' + i + '" type="button" aria-label="' + escapeAttr(t('common.remove')) + '">&times;</button>' +
+      '</div>' +
+      '<div class="rule-body">' +
+      '<div class="rule-field"><label>' + escapeHtml(t('settings.creditRateModel')) + '</label>' +
+      '<input value="' + escapeAttr(r.model || '') + '" data-credit-rate-idx="' + i + '" data-credit-rate-field="model" placeholder="default / claude-opus" spellcheck="false" />' +
+      '</div>' +
+      '<div class="rule-field"><label>' + escapeHtml(t('settings.creditRateValue')) + '</label>' +
+      '<input type="number" min="0" step="0.001" value="' + escapeAttr(String(r.rate != null ? r.rate : 0)) + '" data-credit-rate-idx="' + i + '" data-credit-rate-field="rate" />' +
+      '</div>' +
+      '</div>' +
+      '</div>';
+  }).join('');
+}
+
+export function addCreditRateRow() {
+  state.creditRates.push({ model: '', rate: state.builtinDefaultRate || 0.003 });
+  renderCreditRateRows();
+}
+
+export async function saveBillingConfig() {
+  const multRaw = parseFloat(($('tokenUsageMultiplier') && $('tokenUsageMultiplier').value) || '');
+  if (isNaN(multRaw) || multRaw <= 0) {
+    toast(t('settings.billingInvalidMultiplier'), 'warning');
+    return;
+  }
+  const rates = {};
+  for (const row of (state.creditRates || [])) {
+    const model = String(row.model || '').trim();
+    if (!model) continue;
+    const rate = parseFloat(row.rate);
+    if (isNaN(rate) || rate < 0) {
+      toast(t('settings.billingInvalidRate'), 'warning');
+      return;
+    }
+    rates[model] = rate;
+  }
+  try {
+    const res = await api('/billing', {
+      method: 'POST',
+      body: JSON.stringify({ tokenUsageMultiplier: multRaw, modelCreditRates: rates })
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok || d.success === false) throw new Error(d.error || t('common.saveFailed'));
+    toast(t('settings.billingSaved'), 'success');
+    await loadBillingConfig();
+  } catch (e) {
+    toast((e && e.message) || t('common.saveFailed'), 'error');
+  }
+}
+
+export function bindBillingEvents() {
+  const host = $('creditRateRows');
+  if (!host || host.dataset.bound === '1') return;
+  host.dataset.bound = '1';
+  host.addEventListener('input', (e) => {
+    const tEl = e.target;
+    if (!tEl || !tEl.dataset) return;
+    const idx = parseInt(tEl.dataset.creditRateIdx, 10);
+    const field = tEl.dataset.creditRateField;
+    if (isNaN(idx) || !field || !state.creditRates[idx]) return;
+    if (field === 'rate') state.creditRates[idx].rate = tEl.value;
+    else state.creditRates[idx][field] = tEl.value;
+  });
+  host.addEventListener('click', (e) => {
+    const btn = e.target && e.target.closest ? e.target.closest('[data-credit-rate-remove]') : null;
+    if (!btn) return;
+    const idx = parseInt(btn.getAttribute('data-credit-rate-remove'), 10);
+    if (isNaN(idx)) return;
+    state.creditRates.splice(idx, 1);
+    renderCreditRateRows();
+  });
 }

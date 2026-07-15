@@ -35,6 +35,8 @@ export const state = {
   currentProviderFilter: '',
   privacyModeEnabled: true,
   promptRules: [],
+  creditRates: [],
+  builtinDefaultRate: 0.003,
   builderIdSession: '',
   builderIdPollTimer: null,
   iamSession: '',

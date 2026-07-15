@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -225,6 +226,32 @@ type Config struct {
 	// Defaults to true. Set to false to only use the preferred endpoint.
 	EndpointFallback *bool `json:"endpointFallback,omitempty"`
 
+	// ModelFallback maps a requested model id (e.g. "claude-opus-4.8") to an ordered
+	// list of alternate model ids to try when every native account for the requested
+	// model has failed. Each alternate is resolved through the normal pool model list
+	// (so "grok-4.5" only selects Grok accounts). The original model name is still
+	// returned to the client and written into public usage logs; only the upstream
+	// payload ModelID is rewritten for the alternate provider.
+	//
+	// Example:
+	//   "modelFallback": {
+	//     "claude-opus-4.8": [{"model":"grok-4.5"},{"model":"gemini-2.5-pro"}]
+	//   }
+	ModelFallback map[string][]ModelFallbackTarget `json:"modelFallback,omitempty"`
+
+	// ModelCreditRates maps a model id (or prefix) to credits charged per 1k tokens
+	// (input+output combined). Used when a request is served by a non-Kiro provider
+	// (Grok/Codex/Antigravity) that does not emit Kiro meteringEvent credits, so
+	// API-key credit balances still decrement as if the original model ran on Kiro.
+	// Matching is longest-prefix (case-insensitive). Key "default" is the fallback rate.
+	// Example: {"claude-opus-4": 0.015, "claude-sonnet": 0.003, "default": 0.003}
+	ModelCreditRates map[string]float64 `json:"modelCreditRates,omitempty"`
+
+	// TokenUsageMultiplier scales tokens billed to API keys (and estimated credits)
+	// after a successful request. 1.0 / 0 / unset means no scaling. Applied at
+	// record time only — client-facing usage fields stay raw.
+	TokenUsageMultiplier float64 `json:"tokenUsageMultiplier,omitempty"`
+
 	// AllowOverUsage allows accounts to continue serving requests even when their
 	// usage quota has been exhausted. When enabled, the pool will not skip accounts
 	// solely because usageCurrent >= usageLimit.
@@ -265,6 +292,14 @@ type Config struct {
 	FailedRequests  int     `json:"failedRequests,omitempty"`  // Failed requests count
 	TotalTokens     int     `json:"totalTokens,omitempty"`     // Total tokens processed
 	TotalCredits    float64 `json:"totalCredits,omitempty"`    // Total credits consumed
+}
+
+// ModelFallbackTarget is one alternate model to try after the native pool for the
+// requested model is exhausted (all accounts failed or none available).
+type ModelFallbackTarget struct {
+	// Model is the alternate model id used for pool routing and upstream dispatch
+	// (e.g. "grok-4.5"). The client-facing model name stays the original request.
+	Model string `json:"model"`
 }
 
 // AGQuotaBucket is one per-model quota entry from the Antigravity Cloud Code
@@ -970,6 +1005,198 @@ func UpdatePreferredEndpoint(endpoint string) error {
 	cfgLock.Lock()
 	defer cfgLock.Unlock()
 	cfg.PreferredEndpoint = endpoint
+	return Save()
+}
+
+
+// GetModelFallback returns the ordered fallback targets for a requested model.
+// Matching is case-insensitive on the model id. Returns nil when no chain is configured.
+func GetModelFallback(model string) []ModelFallbackTarget {
+	cfgLock.RLock()
+	defer cfgLock.RUnlock()
+	if cfg == nil || len(cfg.ModelFallback) == 0 {
+		return nil
+	}
+	key := strings.ToLower(strings.TrimSpace(model))
+	if key == "" {
+		return nil
+	}
+	// Exact match first (case-insensitive).
+	for k, v := range cfg.ModelFallback {
+		if strings.ToLower(strings.TrimSpace(k)) == key {
+			out := make([]ModelFallbackTarget, 0, len(v))
+			for _, t := range v {
+				m := strings.TrimSpace(t.Model)
+				if m == "" {
+					continue
+				}
+				out = append(out, ModelFallbackTarget{Model: m})
+			}
+			return out
+		}
+	}
+	return nil
+}
+
+// UpdateModelFallback replaces the entire model-fallback map and persists.
+// Pass nil or empty to clear.
+func UpdateModelFallback(m map[string][]ModelFallbackTarget) error {
+	cfgLock.Lock()
+	defer cfgLock.Unlock()
+	if len(m) == 0 {
+		cfg.ModelFallback = nil
+	} else {
+		cleaned := make(map[string][]ModelFallbackTarget, len(m))
+		for k, v := range m {
+			key := strings.TrimSpace(k)
+			if key == "" {
+				continue
+			}
+			list := make([]ModelFallbackTarget, 0, len(v))
+			for _, t := range v {
+				m := strings.TrimSpace(t.Model)
+				if m == "" {
+					continue
+				}
+				list = append(list, ModelFallbackTarget{Model: m})
+			}
+			if len(list) > 0 {
+				cleaned[key] = list
+			}
+		}
+		if len(cleaned) == 0 {
+			cfg.ModelFallback = nil
+		} else {
+			cfg.ModelFallback = cleaned
+		}
+	}
+	return Save()
+}
+
+// GetModelCreditRate returns credits charged per 1k tokens for the given model.
+// Matching is longest case-insensitive prefix against ModelCreditRates keys.
+// Falls back to the "default" key, then to BuiltinModelCreditRate when nothing is configured.
+func GetModelCreditRate(model string) float64 {
+	cfgLock.RLock()
+	defer cfgLock.RUnlock()
+	if cfg == nil || len(cfg.ModelCreditRates) == 0 {
+		return BuiltinModelCreditRate
+	}
+	key := strings.ToLower(strings.TrimSpace(model))
+	var bestKey string
+	var bestRate float64
+	var found bool
+	var defaultRate float64
+	var hasDefault bool
+	for k, rate := range cfg.ModelCreditRates {
+		norm := strings.ToLower(strings.TrimSpace(k))
+		if norm == "" {
+			continue
+		}
+		if norm == "default" {
+			defaultRate = rate
+			hasDefault = true
+			continue
+		}
+		if key == norm || strings.HasPrefix(key, norm) {
+			if !found || len(norm) > len(bestKey) {
+				bestKey = norm
+				bestRate = rate
+				found = true
+			}
+		}
+	}
+	if found {
+		return bestRate
+	}
+	if hasDefault {
+		return defaultRate
+	}
+	return BuiltinModelCreditRate
+}
+
+// UpdateModelCreditRates replaces the credit-rate map and persists. Pass nil/empty to clear.
+func UpdateModelCreditRates(rates map[string]float64) error {
+	cfgLock.Lock()
+	defer cfgLock.Unlock()
+	if len(rates) == 0 {
+		cfg.ModelCreditRates = nil
+	} else {
+		cleaned := make(map[string]float64, len(rates))
+		for k, v := range rates {
+			key := strings.TrimSpace(k)
+			if key == "" {
+				continue
+			}
+			cleaned[key] = v
+		}
+		if len(cleaned) == 0 {
+			cfg.ModelCreditRates = nil
+		} else {
+			cfg.ModelCreditRates = cleaned
+		}
+	}
+	return Save()
+}
+
+// BuiltinModelCreditRate is the hard-coded fallback when ModelCreditRates is empty
+// or has no matching prefix / "default" key.
+const BuiltinModelCreditRate = 0.003
+
+// GetTokenUsageMultiplier returns the token billing scale factor. Values <= 0
+// (including unset) mean no scaling and return 1.0.
+func GetTokenUsageMultiplier() float64 {
+	cfgLock.RLock()
+	defer cfgLock.RUnlock()
+	if cfg == nil || cfg.TokenUsageMultiplier <= 0 {
+		return 1.0
+	}
+	return cfg.TokenUsageMultiplier
+}
+
+// GetModelCreditRates returns a copy of the configured credit-rate map.
+func GetModelCreditRates() map[string]float64 {
+	cfgLock.RLock()
+	defer cfgLock.RUnlock()
+	if cfg == nil || len(cfg.ModelCreditRates) == 0 {
+		return map[string]float64{}
+	}
+	out := make(map[string]float64, len(cfg.ModelCreditRates))
+	for k, v := range cfg.ModelCreditRates {
+		out[k] = v
+	}
+	return out
+}
+
+// UpdateBillingConfig validates and persists tokenUsageMultiplier + modelCreditRates
+// in a single Save(). multiplier must be > 0; each rate must be >= 0.
+func UpdateBillingConfig(rates map[string]float64, multiplier float64) error {
+	if multiplier <= 0 {
+		return fmt.Errorf("tokenUsageMultiplier must be > 0")
+	}
+	cleaned := make(map[string]float64, len(rates))
+	for k, v := range rates {
+		key := strings.TrimSpace(k)
+		if key == "" {
+			continue
+		}
+		if v < 0 {
+			return fmt.Errorf("credit rate for %q must be >= 0", key)
+		}
+		cleaned[key] = v
+	}
+
+	cfgLock.Lock()
+	defer cfgLock.Unlock()
+	if cfg == nil {
+		return fmt.Errorf("config not loaded")
+	}
+	cfg.TokenUsageMultiplier = multiplier
+	if len(cleaned) == 0 {
+		cfg.ModelCreditRates = nil
+	} else {
+		cfg.ModelCreditRates = cleaned
+	}
 	return Save()
 }
 

@@ -372,6 +372,7 @@ import {
       '<th>' + escapeHtml(t('logs.status')) + '</th>' +
       '<th>' + escapeHtml(t('logs.endpoint')) + '</th>' +
       '<th>' + escapeHtml(t('logs.model')) + '</th>' +
+      '<th>' + escapeHtml(t('logs.provider') || 'Provider') + '</th>' +
       '<th>' + escapeHtml(t('logs.account')) + '</th>' +
       '<th>' + escapeHtml(t('logs.ip') || 'IP') + '</th>' +
       '<th>' + escapeHtml(t('logs.apiKey') || 'API Key') + '</th>' +
@@ -401,6 +402,7 @@ import {
         '<td>' + statusCell + '</td>' +
         '<td>' + escapeHtml(l.endpoint) + '</td>' +
         '<td>' + escapeHtml(l.model || '-') + '</td>' +
+        '<td>' + escapeHtml(l.provider || '-') + '</td>' +
         '<td>' + escapeHtml(accountLabel(l.accountId)) + '</td>' +
         '<td>' + escapeHtml(l.clientIp || '-') + '</td>' +
         '<td>' + escapeHtml(keyLabel) + '</td>' +
@@ -434,7 +436,7 @@ import {
 import {
   loadSettings, saveThinkingConfig, saveEndpointConfig, onProxyTypeChange, saveProxyConfig, saveRequireApiKey,
   saveOverUsageConfig, changePassword, resetStats, renderApiKeys, renderOverviewApiKeyStats, bindApiKeyEvents, savePromptFilter,
-  renderPromptRules, addPromptRule,
+  renderPromptRules, addPromptRule, saveBillingConfig, addCreditRateRow, bindBillingEvents,
 } from './js/settings.js';
 
 import {
@@ -903,6 +905,11 @@ import {
   function bindSettingsEvents() {
     $('saveRequireApiKeyBtn').addEventListener('click', saveRequireApiKey);
     $('saveOverUsageBtn').addEventListener('click', saveOverUsageConfig);
+    const saveBillingBtn = $('saveBillingBtn');
+    if (saveBillingBtn) saveBillingBtn.addEventListener('click', saveBillingConfig);
+    const addCreditRateBtn = $('addCreditRateBtn');
+    if (addCreditRateBtn) addCreditRateBtn.addEventListener('click', addCreditRateRow);
+    bindBillingEvents();
     $('saveThinkingBtn').addEventListener('click', saveThinkingConfig);
     $('saveEndpointBtn').addEventListener('click', saveEndpointConfig);
     $('changePasswordBtn').addEventListener('click', changePassword);

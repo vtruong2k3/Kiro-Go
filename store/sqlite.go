@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,7 +21,7 @@ import (
 )
 
 const (
-	schemaVersion = 1
+	schemaVersion = 2
 	driverName    = "sqlite"
 )
 
@@ -140,7 +141,8 @@ CREATE TABLE IF NOT EXISTS request_logs (
   credits      REAL    NOT NULL DEFAULT 0,
   duration_ms  INTEGER NOT NULL DEFAULT 0,
   client_ip    TEXT    NOT NULL DEFAULT '',
-  api_key_id   TEXT    NOT NULL DEFAULT ''
+  api_key_id   TEXT    NOT NULL DEFAULT '',
+  provider     TEXT    NOT NULL DEFAULT ''
 )`); err != nil {
 		return fmt.Errorf("store: request_logs: %w", err)
 	}
@@ -161,6 +163,16 @@ CREATE TABLE IF NOT EXISTS key_ip_stats (
 	}
 	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_key_ip_last ON key_ip_stats(key_id, last_seen DESC)`); err != nil {
 		return fmt.Errorf("store: idx_key_ip_last: %w", err)
+	}
+
+	// v2: admin-only real provider column on request_logs.
+	if ver < 2 {
+		if _, err := s.db.Exec(`ALTER TABLE request_logs ADD COLUMN provider TEXT NOT NULL DEFAULT ''`); err != nil {
+			// Ignore "duplicate column" if a previous partial migration ran.
+			if !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+				return fmt.Errorf("store: add provider column: %w", err)
+			}
+		}
 	}
 
 	if ver < schemaVersion {
