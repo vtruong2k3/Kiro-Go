@@ -117,6 +117,7 @@ export function formatAuthMethod(method) {
   if (normalized === 'grok' || normalized === 'xai') return t('provider.grok') || 'Grok / xAI';
   if (normalized === 'codex') return t('provider.codex') || 'OpenAI Codex';
   if (normalized === 'api_key' || normalized === 'apikey' || normalized === 'api key') return t('auth.apiKey') || 'API Key';
+  if (normalized === 'remotekiro') return t('provider.remotekiro') || 'Remote Kiro-Go';
   return method;
 }
 // accountProviderKey buckets an account into one of the sidebar provider
@@ -128,6 +129,7 @@ export function accountProviderKey(a) {
   if (p === 'grok' || p === 'xai' || m === 'grok' || a.grokApiKey) return 'grok';
   if (p === 'codex' || m === 'codex') return 'codex';
   if (p === 'antigravity' || m === 'antigravity') return 'antigravity';
+  if (p === 'remotekiro' || m === 'remotekiro') return 'remotekiro';
   return 'kiro';
 }
 // Display label + icon for each provider bucket, used by the sidebar nav and the
@@ -137,7 +139,8 @@ export const PROVIDER_NAV = [
   { key: 'kiro', labelKey: 'provider.kiro', icon: 'fa-solid fa-robot', color: '#f59e0b', descKey: 'providerDesc.kiro' },
   { key: 'antigravity', labelKey: 'provider.antigravity', icon: 'fa-brands fa-google', color: '#4285f4', descKey: 'providerDesc.antigravity' },
   { key: 'grok', labelKey: 'provider.grok', icon: 'fa-solid fa-bolt', color: '#111827', descKey: 'providerDesc.grok' },
-  { key: 'codex', labelKey: 'provider.codex', icon: 'fa-solid fa-code', color: '#3B82F6', descKey: 'providerDesc.codex' }
+  { key: 'codex', labelKey: 'provider.codex', icon: 'fa-solid fa-code', color: '#3B82F6', descKey: 'providerDesc.codex' },
+  { key: 'remotekiro', labelKey: 'provider.remotekiro', icon: 'fa-solid fa-network-wired', color: '#0d9488', descKey: 'providerDesc.remotekiro' }
 ];
 export function getStatusBadge(a) {
   const out = [];

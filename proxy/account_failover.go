@@ -94,7 +94,7 @@ func classifyAccountFailure(account *config.Account, err error, fromTokenRefresh
 	if account == nil || err == nil {
 		return ""
 	}
-	if isKiroAPIKeyAccount(account) {
+	if isKiroAPIKeyAccount(account) || isRemoteKiroAccount(account) {
 		return EventSoft
 	}
 	errMsg := err.Error()
@@ -131,7 +131,9 @@ func (h *Handler) handleAccountFailureEx(account *config.Account, err error, fro
 
 	// Kiro CLI API-key (ksk_) accounts have no OAuth token to refresh and their
 	// 403s are often transient (region backoff). Soft-fail only; never auto-ban.
-	if isKiroAPIKeyAccount(account) {
+	// Remote Kiro-Go peers are the same: static sk, peer may be down or rate-limit —
+	// rotate with a soft cooldown, never disable the local account entry.
+	if isKiroAPIKeyAccount(account) || isRemoteKiroAccount(account) {
 		h.pool.RecordError(account.ID, false)
 		NotifyAccountEvent(account, EventSoft, err.Error())
 		return

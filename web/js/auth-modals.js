@@ -28,7 +28,8 @@ export var METHOD_ICONS = {
   apikey: 'fa-solid fa-key',
   grok: 'fa-solid fa-robot',
   antigravity: 'fa-brands fa-google',
-  codex: 'fa-solid fa-code'
+  codex: 'fa-solid fa-code',
+  remotekiro: 'fa-solid fa-network-wired'
 };
 export function methodCard(type, title, desc) {
   var icon = METHOD_ICONS[type] || 'fa-solid fa-circle-plus';
@@ -57,6 +58,7 @@ export function showModal(type) {
   else if (type === 'grok') modalGrok(title, body);
   else if (type === 'codex') modalCodex(title, body);
   else if (type === 'apikey') modalKiroApiKey(title, body);
+  else if (type === 'remotekiro') modalRemoteKiro(title, body);
   if (!modal.classList.contains('active')) openDialog('addModal');
   enhanceCustomSelects(body);
 }
@@ -94,7 +96,8 @@ export const PROVIDER_METHODS = {
   kiro: ['builderid', 'iam', 'sso', 'local', 'credentials', 'cookie', 'enterprisesso', 'apikey'],
   antigravity: ['antigravity'],
   grok: ['grok'],
-  codex: ['codex']
+  codex: ['codex'],
+  remotekiro: ['remotekiro']
 };
 export const METHOD_CARDS = {
   builderid: () => methodCard('builderid', t('modal.builderIdTitle'), t('modal.builderIdDesc')),
@@ -107,10 +110,11 @@ export const METHOD_CARDS = {
   apikey: () => methodCard('apikey', t('modal.apiKeyTitle') || 'Kiro API Key', t('modal.apiKeyDesc') || 'Add accounts with Kiro CLI API keys (ksk_…). One key per line for batch import.'),
   antigravity: () => methodCard('antigravity', t('modal.antigravityTitle'), t('modal.antigravityDesc')),
   grok: () => methodCard('grok', t('modal.grokTitle') || 'Grok / xAI', t('modal.grokDesc') || 'Add xAI Grok account using API key (recommended) or OAuth'),
-  codex: () => methodCard('codex', t('modal.codexTitle') || 'OpenAI Codex', t('modal.codexDesc') || 'Add a ChatGPT account via OAuth or by importing a token')
+  codex: () => methodCard('codex', t('modal.codexTitle') || 'OpenAI Codex', t('modal.codexDesc') || 'Add a ChatGPT account via OAuth or by importing a token'),
+  remotekiro: () => methodCard('remotekiro', t('modal.remotekiroTitle') || 'Remote Kiro-Go', t('modal.remotekiroDesc') || 'Use another Kiro-Go instance via base URL and API key')
 };
 // Provider order used by "All Accounts": kiro methods first, then antigravity, grok, codex.
-export const ALL_METHODS = ['builderid', 'iam', 'sso', 'local', 'credentials', 'cookie', 'enterprisesso', 'apikey', 'antigravity', 'grok', 'codex'];
+export const ALL_METHODS = ['builderid', 'iam', 'sso', 'local', 'credentials', 'cookie', 'enterprisesso', 'apikey', 'antigravity', 'grok', 'codex', 'remotekiro'];
 
 
 // Default AWS regions offered in Kiro API-key / login pickers. Users can add more
@@ -320,6 +324,77 @@ export async function importKiroApiKey() {
   }
 }
 
+
+
+export function modalRemoteKiro(title, body) {
+  title.textContent = t('modal.remotekiroTitle') || 'Remote Kiro-Go';
+  body.innerHTML =
+    '<p class="help-block">' + escapeHtml(t('modal.remotekiroDesc') || 'Proxy requests through another Kiro-Go instance. Enter its public base URL and a client API key (sk-…). Local and remote may both bill usage.') + '</p>' +
+    '<div class="form-group">' +
+    '<label>' + escapeHtml(t('remotekiro.baseUrlLabel') || 'Base URL') + ' <span class="text-danger">*</span></label>' +
+    '<input type="text" id="remoteKiroBaseUrl" class="font-mono" placeholder="' + escapeAttr(t('remotekiro.baseUrlPlaceholder') || 'https://host:port') + '" />' +
+    '<p class="help-block text-xs mt-1">' + escapeHtml(t('remotekiro.baseUrlHint') || 'Root URL of the remote Kiro-Go (no trailing /v1).') + '</p>' +
+    '</div>' +
+    '<div class="form-group">' +
+    '<label>' + escapeHtml(t('remotekiro.apiKeyLabel') || 'API Key') + ' <span class="text-danger">*</span></label>' +
+    '<input type="password" id="remoteKiroApiKey" class="font-mono" placeholder="' + escapeAttr(t('remotekiro.apiKeyPlaceholder') || 'sk-...') + '" autocomplete="off" />' +
+    '<p class="help-block text-xs mt-1">' + escapeHtml(t('remotekiro.apiKeyHint') || 'API key from the remote instance Settings → API Keys.') + '</p>' +
+    '</div>' +
+    '<div class="form-group">' +
+    '<label>' + escapeHtml(t('remotekiro.checkKeyUrlLabel') || 'Check-key URL') + '</label>' +
+    '<input type="text" id="remoteKiroCheckKeyUrl" class="font-mono" placeholder="' + escapeAttr(t('remotekiro.checkKeyUrlPlaceholder') || 'https://host/checkkey/info') + '" />' +
+    '<p class="help-block text-xs mt-1">' + escapeHtml(t('remotekiro.checkKeyUrlHint') || 'Optional. Full check-key endpoint of the remote instance so this account can mirror the key credit balance and skip when it runs out.') + '</p>' +
+    '</div>' +
+    '<div class="form-group">' +
+    '<label>' + escapeHtml(t('detail.nickname') || 'Nickname') + '</label>' +
+    '<input type="text" id="remoteKiroNickname" placeholder="' + escapeAttr(t('remotekiro.nicknamePlaceholder') || 'Optional display name') + '" />' +
+    '</div>' +
+    '<div class="form-group">' +
+    '<label>' + escapeHtml(t('detail.weight') || 'Weight') + '</label>' +
+    '<input type="number" id="remoteKiroWeight" min="1" value="1" />' +
+    '</div>' +
+    '<div class="modal-footer">' +
+    '<button class="btn btn-secondary" data-modal-goto="add" type="button">' + escapeHtml(t('common.back')) + '</button>' +
+    '<button class="btn btn-primary" id="addRemoteKiroBtn" type="button">' + escapeHtml(t('remotekiro.add') || 'Add Remote Instance') + '</button>' +
+    '</div>';
+  $('addRemoteKiroBtn').addEventListener('click', importRemoteKiro);
+}
+export async function importRemoteKiro() {
+  const baseURL = ($('remoteKiroBaseUrl').value || '').trim();
+  const apiKey = ($('remoteKiroApiKey').value || '').trim();
+  const checkKeyURL = ($('remoteKiroCheckKeyUrl').value || '').trim();
+  const nickname = ($('remoteKiroNickname').value || '').trim();
+  const weight = parseInt(($('remoteKiroWeight').value || '1'), 10) || 1;
+  if (!baseURL) return toastError((t('remotekiro.baseUrlLabel') || 'Base URL') + ' is required');
+  if (!apiKey) return toastError((t('remotekiro.apiKeyLabel') || 'API Key') + ' is required');
+  const btn = $('addRemoteKiroBtn');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = t('remotekiro.validating') || 'Validating...';
+  }
+  try {
+    const res = await api('/auth/remote-kiro', {
+      method: 'POST',
+      body: JSON.stringify({ baseURL, apiKey, checkKeyURL, nickname, weight })
+    });
+    const d = await res.json().catch(function () { return {}; });
+    if (!res.ok || d.error) {
+      return toastError((d && d.error) || ('HTTP ' + res.status));
+    }
+    closeModal();
+    await loadAccounts();
+    await loadStats();
+    toastPrimary(t('remotekiro.added') || 'Remote Kiro-Go account added');
+    if (d.account && d.account.id) autoRefreshNewAccount(d.account.id);
+  } catch (e) {
+    toastError(String(e && e.message ? e.message : e));
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = t('remotekiro.add') || 'Add Remote Instance';
+    }
+  }
+}
 
 export function modalAdd(title, body) {
   title.textContent = t('modal.addAccount');

@@ -43,6 +43,8 @@ func providerLabel(account *config.Account) string {
 		return "codex"
 	case isGrokAccount(account):
 		return "grok"
+	case isRemoteKiroAccount(account):
+		return "remotekiro"
 	case isKiroAPIKeyAccount(account):
 		return "kiro-apikey"
 	default:

@@ -104,6 +104,17 @@ type Account struct {
 	CodexLimitReached bool               `json:"codexLimitReached,omitempty"`
 	CodexResetCredits int                `json:"codexResetCredits,omitempty"` // rate_limit_reset_credits.available_count
 
+	// Remote Kiro-Go peer (OpenAI-compatible). Provider/AuthMethod == "remotekiro".
+	// AccessToken holds the static sk- client key; no refresh. RemoteBaseURL is the
+	// peer root (no trailing /v1) used for /v1/chat/completions and /v1/models.
+	// RemoteCheckKeyURL is the peer's check-key endpoint (POST {url} {"key":sk})
+	// returning creditLimit/creditsUsed so this account can mirror the peer's key
+	// balance into UsageCurrent/UsageLimit (empty = no credit sync). Path differs
+	// per deployment (/check/api/lookup on stock Kiro-Go, /checkkey/info elsewhere),
+	// so operators paste the full URL at import time.
+	RemoteBaseURL     string `json:"remoteBaseURL,omitempty"`
+	RemoteCheckKeyURL string `json:"remoteCheckKeyURL,omitempty"`
+
 	// Per-account outbound proxy (falls back to global ProxyURL if empty)
 	ProxyURL string `json:"proxyURL,omitempty"`
 

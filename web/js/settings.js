@@ -1537,6 +1537,32 @@ export function addCreditRateRow() {
   renderCreditRateRows();
 }
 
+// Operator-preferred billing defaults. Fills the form (multiplier + credit rate
+// rows) without persisting — the operator still clicks Save to apply. Order keeps
+// "default" first, then models alphabetically, matching loadBillingConfig().
+export const BILLING_DEFAULT_MULTIPLIER = 1;
+export const BILLING_DEFAULT_RATES = [
+  { model: 'default', rate: 0.003 },
+  { model: 'claude-haiku', rate: 0.001 },
+  { model: 'claude-opus', rate: 0.03 },
+  { model: 'claude-sonnet', rate: 0.15 },
+  { model: 'deepseek', rate: 0.002 },
+  { model: 'glm', rate: 0.002 },
+  { model: 'gpt-5.4', rate: 0.008 },
+  { model: 'gpt-5.5', rate: 0.01 },
+  { model: 'gpt-5.6', rate: 0.01 },
+  { model: 'minimax', rate: 0.002 },
+  { model: 'qwen', rate: 0.002 }
+];
+
+export function resetBillingDefaults() {
+  const multEl = $('tokenUsageMultiplier');
+  if (multEl) multEl.value = String(BILLING_DEFAULT_MULTIPLIER);
+  state.creditRates = BILLING_DEFAULT_RATES.map(r => ({ model: r.model, rate: r.rate }));
+  renderCreditRateRows();
+  toast(t('settings.billingDefaultsFilled'), 'info');
+}
+
 export async function saveBillingConfig() {
   const multRaw = parseFloat(($('tokenUsageMultiplier') && $('tokenUsageMultiplier').value) || '');
   if (isNaN(multRaw) || multRaw <= 0) {

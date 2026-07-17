@@ -436,7 +436,7 @@ import {
 import {
   loadSettings, saveThinkingConfig, saveEndpointConfig, onProxyTypeChange, saveProxyConfig, saveRequireApiKey,
   saveOverUsageConfig, changePassword, resetStats, renderApiKeys, renderOverviewApiKeyStats, bindApiKeyEvents, savePromptFilter,
-  renderPromptRules, addPromptRule, saveBillingConfig, addCreditRateRow, bindBillingEvents,
+  renderPromptRules, addPromptRule, saveBillingConfig, addCreditRateRow, bindBillingEvents, resetBillingDefaults,
   saveTelegramConfig, testTelegramConfig,
 } from './js/settings.js';
 
@@ -910,6 +910,8 @@ import {
     if (saveBillingBtn) saveBillingBtn.addEventListener('click', saveBillingConfig);
     const addCreditRateBtn = $('addCreditRateBtn');
     if (addCreditRateBtn) addCreditRateBtn.addEventListener('click', addCreditRateRow);
+    const resetBillingBtn = $('resetBillingBtn');
+    if (resetBillingBtn) resetBillingBtn.addEventListener('click', resetBillingDefaults);
     bindBillingEvents();
     const saveTelegramBtn = $('saveTelegramBtn');
     if (saveTelegramBtn) saveTelegramBtn.addEventListener('click', saveTelegramConfig);

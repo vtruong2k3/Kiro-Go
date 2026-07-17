@@ -445,6 +445,13 @@ func RefreshAccountInfo(account *config.Account) (*config.AccountInfo, error) {
 		return refreshCodexInfo(account, info)
 	}
 
+	// Remote Kiro-Go peers have no AWS endpoint. When a check-key URL is
+	// configured, mirror the remote key's credit balance into Usage* so the pool
+	// skips this account once the remote key is exhausted; otherwise no-op.
+	if isRemoteKiroAccount(account) {
+		return refreshRemoteKiroInfo(account, info)
+	}
+
 	// 获取使用量和订阅信息
 	usage, err := GetUsageLimits(account)
 	if err != nil {

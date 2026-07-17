@@ -36,9 +36,11 @@ var addMethodCards = []string{
 	"credentials",
 	"cookie",
 	"enterprisesso",
+	"apikey",
 	"antigravity",
 	"grok",
 	"codex",
+	"remotekiro",
 }
 
 // readAppJS returns the contents of the module that defines the add-account

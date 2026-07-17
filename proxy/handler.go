@@ -10,6 +10,7 @@ import (
 	"kiro-go/pool"
 	"kiro-go/store"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -771,6 +772,19 @@ func (h *Handler) refreshModelsCache() {
 			continue
 		}
 
+		// Remote Kiro-Go peers expose OpenAI-compatible /v1/models.
+		if isRemoteKiroAccount(account) {
+			modelIDs, err := FetchRemoteKiroModels(account)
+			if err != nil {
+				logger.Warnf("[ModelsCache] Failed to refresh remote models for %s: %v", account.Email, err)
+				h.handleAccountFailure(account, err)
+				continue
+			}
+			h.pool.SetModelList(account.ID, modelIDs)
+			aggregated = mergeUniqueModels(aggregated, remoteModelInfos(modelIDs))
+			continue
+		}
+
 		models, err := ListAvailableModels(account)
 		if err != nil {
 			logger.Warnf("[ModelsCache] Failed to refresh for %s: %v", account.Email, err)
@@ -835,6 +849,22 @@ func (h *Handler) fetchAndCacheAccountModels(account *config.Account) error {
 		h.modelsCacheTime = time.Now().Unix()
 		h.modelsCacheMu.Unlock()
 		logger.Infof("[ModelsCache] Registered %d Codex models for account %s", len(cModels), account.Email)
+		return nil
+	}
+
+	// Remote Kiro-Go peers: live GET /v1/models.
+	if isRemoteKiroAccount(account) {
+		modelIDs, err := FetchRemoteKiroModels(account)
+		if err != nil {
+			return err
+		}
+		h.pool.SetModelList(account.ID, modelIDs)
+		rModels := remoteModelInfos(modelIDs)
+		h.modelsCacheMu.Lock()
+		h.cachedModels = mergeUniqueModels(h.cachedModels, rModels)
+		h.modelsCacheTime = time.Now().Unix()
+		h.modelsCacheMu.Unlock()
+		logger.Infof("[ModelsCache] Registered %d Remote Kiro models for account %s", len(rModels), account.Email)
 		return nil
 	}
 
@@ -2578,6 +2608,10 @@ func (h *Handler) ensureValidToken(account *config.Account) error {
 		// There is no refresh token and no OIDC refresh path.
 		return nil
 	}
+	if isRemoteKiroAccount(account) {
+		// Remote Kiro-Go peers use a static sk- client key in AccessToken.
+		return nil
+	}
 	if isGrokAccount(account) && account.RefreshToken == "" {
 		// Grok API-key accounts use a static key with no refresh token, so there
 		// is nothing to refresh. Grok Build OAuth accounts DO carry a refresh
@@ -2713,6 +2747,8 @@ func (h *Handler) handleAdminAPI(w http.ResponseWriter, r *http.Request) {
 		h.apiCancelKiroSso(w, r)
 	case path == "/auth/kiro-apikey" && r.Method == "POST":
 		h.apiImportKiroAPIKey(w, r)
+	case path == "/auth/remote-kiro" && r.Method == "POST":
+		h.apiImportRemoteKiro(w, r)
 	case path == "/auth/antigravity/start" && r.Method == "POST":
 		h.apiStartAntigravity(w, r)
 	case path == "/auth/antigravity/poll" && r.Method == "POST":
@@ -2859,6 +2895,8 @@ func (h *Handler) apiGetAccounts(w http.ResponseWriter, r *http.Request) {
 			"banTime":           a.BanTime,
 			"expiresAt":         a.ExpiresAt,
 			"hasToken":          a.AccessToken != "",
+			"remoteBaseURL":     a.RemoteBaseURL,
+			"remoteCheckKeyURL": a.RemoteCheckKeyURL,
 			"machineId":         a.MachineId,
 			"weight":            a.Weight,
 			"overageStatus":     a.OverageStatus,
@@ -2930,7 +2968,8 @@ func (h *Handler) apiAddAccount(w http.ResponseWriter, r *http.Request) {
 		shouldRefresh := account.AccessToken != "" ||
 			isAntigravityAccount(&account) ||
 			isGrokAccount(&account) ||
-			isCodexAccount(&account)
+			isCodexAccount(&account) ||
+			isRemoteKiroAccount(&account)
 
 		if shouldRefresh {
 			go func(acc config.Account) {
@@ -4188,6 +4227,103 @@ func (h *Handler) apiImportKiroAPIKey(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *Handler) apiImportRemoteKiro(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		BaseURL     string `json:"baseURL"`
+		APIKey      string `json:"apiKey"`
+		Nickname    string `json:"nickname"`
+		Weight      int    `json:"weight"`
+		ProxyURL    string `json:"proxyURL"`
+		CheckKeyURL string `json:"checkKeyURL"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(400)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid JSON"})
+		return
+	}
+
+	canonical, modelIDs, err := ValidateRemoteKiro(req.BaseURL, req.APIKey, req.ProxyURL)
+	if err != nil {
+		w.WriteHeader(400)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	// Optional check-key URL: validate the full URL now so a bad value is rejected
+	// at import instead of silently failing every later credit refresh.
+	checkKeyURL := strings.TrimSpace(req.CheckKeyURL)
+	if checkKeyURL != "" {
+		if err := validateRemoteCheckKeyURL(checkKeyURL); err != nil {
+			w.WriteHeader(400)
+			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+	}
+
+	host := canonical
+	if u, err := url.Parse(canonical); err == nil && u.Host != "" {
+		host = u.Host
+	}
+	email := "remote@" + host
+
+	weight := req.Weight
+	if weight <= 0 {
+		weight = 1
+	}
+
+	account := config.Account{
+		ID:                auth.GenerateAccountID(),
+		Email:             email,
+		Nickname:          strings.TrimSpace(req.Nickname),
+		AccessToken:       strings.TrimSpace(req.APIKey),
+		AuthMethod:        "remotekiro",
+		Provider:          "remotekiro",
+		RemoteBaseURL:     canonical,
+		RemoteCheckKeyURL: checkKeyURL,
+		ProxyURL:          strings.TrimSpace(req.ProxyURL),
+		Weight:            weight,
+		ExpiresAt:         0,
+		Enabled:           true,
+	}
+
+	if err := config.AddAccount(account); err != nil {
+		w.WriteHeader(500)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	h.pool.Reload()
+	h.pool.SetModelList(account.ID, modelIDs)
+	h.modelsCacheMu.Lock()
+	h.cachedModels = mergeUniqueModels(h.cachedModels, remoteModelInfos(modelIDs))
+	h.modelsCacheTime = time.Now().Unix()
+	h.modelsCacheMu.Unlock()
+
+	// If a check-key URL was provided, pull the remote key's credit balance now so
+	// the account shows usage immediately (best-effort; ignore errors).
+	if checkKeyURL != "" {
+		if info, ierr := RefreshAccountInfo(&account); ierr == nil && info != nil {
+			_ = config.UpdateAccountInfo(account.ID, *info)
+		} else if ierr != nil {
+			logger.Warnf("[RemoteKiro] Initial credit refresh failed for %s: %v", account.Email, ierr)
+		}
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"account": map[string]interface{}{
+			"id":                account.ID,
+			"email":             account.Email,
+			"authMethod":        account.AuthMethod,
+			"provider":          account.Provider,
+			"remoteBaseURL":     account.RemoteBaseURL,
+			"remoteCheckKeyURL": account.RemoteCheckKeyURL,
+			"modelCount":        len(modelIDs),
+			"nickname":          account.Nickname,
+		},
+	})
+}
+
 func (h *Handler) apiImportCredentials(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		AccessToken  string `json:"accessToken"`
@@ -4776,6 +4912,8 @@ func (h *Handler) apiGetAccountFull(w http.ResponseWriter, r *http.Request, id s
 		"userId":            account.UserId,
 		"nickname":          account.Nickname,
 		"accessToken":       account.AccessToken,
+		"remoteBaseURL":     account.RemoteBaseURL,
+		"remoteCheckKeyURL": account.RemoteCheckKeyURL,
 		"refreshToken":      account.RefreshToken,
 		"clientId":          account.ClientID,
 		"clientSecret":      account.ClientSecret,
@@ -4859,6 +4997,24 @@ func (h *Handler) apiGetAccountModels(w http.ResponseWriter, r *http.Request, id
 		return
 	}
 
+	// Remote Kiro-Go peers: live OpenAI-compatible model list.
+	if isRemoteKiroAccount(account) {
+		modelIDs, err := FetchRemoteKiroModels(account)
+		if err != nil {
+			w.WriteHeader(500)
+			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		models := remoteModelInfos(modelIDs)
+		h.pool.SetModelList(id, modelIDs)
+		h.modelsCacheMu.Lock()
+		h.cachedModels = mergeUniqueModels(h.cachedModels, models)
+		h.modelsCacheTime = time.Now().Unix()
+		h.modelsCacheMu.Unlock()
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "models": models})
+		return
+	}
+
 	models, err := ListAvailableModels(account)
 	if err != nil {
 		w.WriteHeader(500)
@@ -4913,6 +5069,9 @@ func (h *Handler) apiGetProviderModels(w http.ResponseWriter, r *http.Request, p
 	case "antigravity":
 		infos = antigravityModelInfos()
 		source = "static"
+	case "remotekiro":
+		infos, source = h.remoteKiroProviderModelInfos()
+		key = "remotekiro"
 	case "kiro", "":
 		infos, source = h.kiroProviderModelInfos()
 		key = "kiro"
@@ -4971,6 +5130,31 @@ func (h *Handler) apiGetProviderModels(w http.ResponseWriter, r *http.Request, p
 // kiroProviderModelInfos returns Kiro/AWS-backed models from the aggregated
 // cache (excluding static Grok/Codex/Antigravity catalogs). Falls back to the
 // built-in Claude list when the cache is empty.
+// remoteKiroProviderModelInfos unions model ids registered on remotekiro accounts.
+func (h *Handler) remoteKiroProviderModelInfos() ([]ModelInfo, string) {
+	accounts := config.GetAccounts()
+	seen := make(map[string]bool)
+	var ids []string
+	for i := range accounts {
+		a := &accounts[i]
+		if !isRemoteKiroAccount(a) {
+			continue
+		}
+		for _, id := range h.pool.GetModelList(a.ID) {
+			id = strings.TrimSpace(id)
+			if id == "" || seen[id] {
+				continue
+			}
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return nil, "empty"
+	}
+	return remoteModelInfos(ids), "remote"
+}
+
 func (h *Handler) kiroProviderModelInfos() ([]ModelInfo, string) {
 	exclude := make(map[string]bool)
 	for _, id := range grokModelIDs() {

@@ -8,7 +8,8 @@ import (
 // CallProvider dispatches a generation request to the upstream provider that
 // owns the selected account. AWS Kiro/CodeWhisperer/AmazonQ accounts go through
 // CallKiroAPI; Antigravity (Google Cloud Code / Gemini) accounts go through
-// CallAntigravityAPI; Grok/xAI accounts go through CallGrokAPI.
+// CallAntigravityAPI; Grok/xAI accounts go through CallGrokAPI; Remote Kiro-Go
+// peers go through CallRemoteKiroAPI (OpenAI chat.completions passthrough).
 // All share the provider-neutral KiroStreamCallback so all SSE-emitting logic
 // in the handlers stays unchanged.
 //
@@ -25,7 +26,24 @@ func CallProvider(account *config.Account, payload *KiroPayload, callback *KiroS
 	if account != nil && isGrokAccount(account) {
 		return CallGrokAPI(account, payload, callback)
 	}
+	if account != nil && isRemoteKiroAccount(account) {
+		return CallRemoteKiroAPI(account, payload, callback)
+	}
 	return CallKiroAPI(account, payload, callback)
+}
+
+// isRemoteKiroAccount reports whether an account proxies to another Kiro-Go
+// (or OpenAI-compatible) peer via RemoteBaseURL + static sk AccessToken.
+func isRemoteKiroAccount(account *config.Account) bool {
+	if account == nil {
+		return false
+	}
+	if strings.EqualFold(account.Provider, "remotekiro") ||
+		strings.EqualFold(account.AuthMethod, "remotekiro") {
+		return true
+	}
+	// Fallback: a configured remote base URL without other provider markers.
+	return strings.TrimSpace(account.RemoteBaseURL) != ""
 }
 
 // isCodexAccount reports whether an account should be routed to the OpenAI Codex
