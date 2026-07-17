@@ -464,6 +464,8 @@ func RefreshAccountInfo(account *config.Account) (*config.AccountInfo, error) {
 			// 保存更新后的账户状态
 			if updateErr := config.UpdateAccount(account.ID, updatedAccount); updateErr != nil {
 				logger.Errorf("[RefreshAccountInfo] Failed to update account ban status: %v", updateErr)
+			} else {
+				NotifyAccountEvent(&updatedAccount, EventBan, updatedAccount.BanReason)
 			}
 
 			return nil, fmt.Errorf("Account suspended: %w", err)
@@ -482,6 +484,8 @@ func RefreshAccountInfo(account *config.Account) (*config.AccountInfo, error) {
 			// 保存更新后的账户状态
 			if updateErr := config.UpdateAccount(account.ID, updatedAccount); updateErr != nil {
 				logger.Errorf("[RefreshAccountInfo] Failed to update account ban status: %v", updateErr)
+			} else {
+				NotifyAccountEvent(&updatedAccount, EventBan, updatedAccount.BanReason)
 			}
 		}
 

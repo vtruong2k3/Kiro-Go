@@ -254,18 +254,18 @@ func NewHandler() *Handler {
 
 	totalReq, successReq, failedReq, totalTokens, totalCredits := config.GetStats()
 	h := &Handler{
-		pool:            pool.GetPool(),
-		totalRequests:   int64(totalReq),
-		successRequests: int64(successReq),
-		failedRequests:  int64(failedReq),
-		totalTokens:     int64(totalTokens),
-		totalCredits:    totalCredits,
-		startTime:       time.Now().Unix(),
-		stopRefresh:     make(chan struct{}),
-		stopStatsSaver:  make(chan struct{}),
-		stopRuntime:     make(chan struct{}),
-		promptCache:     newPromptCacheTracker(defaultPromptCacheTTL),
-		ipTrack:         newIPTracker(),
+		pool:              pool.GetPool(),
+		totalRequests:     int64(totalReq),
+		successRequests:   int64(successReq),
+		failedRequests:    int64(failedReq),
+		totalTokens:       int64(totalTokens),
+		totalCredits:      totalCredits,
+		startTime:         time.Now().Unix(),
+		stopRefresh:       make(chan struct{}),
+		stopStatsSaver:    make(chan struct{}),
+		stopRuntime:       make(chan struct{}),
+		promptCache:       newPromptCacheTracker(defaultPromptCacheTTL),
+		ipTrack:           newIPTracker(),
 		tokenRefreshLocks: make(map[string]*sync.Mutex),
 	}
 
@@ -383,7 +383,7 @@ func (h *Handler) refreshAllAccounts() {
 			newAccessToken, newRefreshToken, newExpiresAt, profileArn, err := auth.RefreshToken(account)
 			if err != nil {
 				logger.Warnf("[BackgroundRefresh] Token refresh failed for %s: %v", account.Email, err)
-				h.handleAccountFailure(account, err)
+				h.handleAccountFailureEx(account, err, true)
 				continue
 			}
 			account.AccessToken = newAccessToken
@@ -742,7 +742,7 @@ func (h *Handler) refreshModelsCache() {
 		account := &accounts[i]
 		if err := h.ensureValidToken(account); err != nil {
 			logger.Warnf("[ModelsCache] Skip %s token refresh failed: %v", account.Email, err)
-			h.handleAccountFailure(account, err)
+			h.handleAccountFailureEx(account, err, true)
 			continue
 		}
 
@@ -2783,6 +2783,12 @@ func (h *Handler) handleAdminAPI(w http.ResponseWriter, r *http.Request) {
 		h.apiGetBilling(w, r)
 	case path == "/billing" && r.Method == "POST":
 		h.apiUpdateBilling(w, r)
+	case path == "/telegram" && r.Method == "GET":
+		h.apiGetTelegram(w, r)
+	case path == "/telegram" && r.Method == "POST":
+		h.apiUpdateTelegram(w, r)
+	case path == "/telegram/test" && r.Method == "POST":
+		h.apiTestTelegram(w, r)
 	case path == "/version" && r.Method == "GET":
 		h.apiGetVersion(w, r)
 	case path == "/export" && r.Method == "POST":
@@ -4432,6 +4438,49 @@ func (h *Handler) apiUpdateBilling(w http.ResponseWriter, r *http.Request) {
 	// Allow nil body map to mean "clear rates"; missing key still arrives as nil.
 	if err := config.UpdateBillingConfig(req.ModelCreditRates, multiplier); err != nil {
 		w.WriteHeader(400)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+func (h *Handler) apiGetTelegram(w http.ResponseWriter, r *http.Request) {
+	cfg := config.GetTelegramConfig()
+	masked, set := MaskBotToken(cfg.BotToken)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"enabled":        cfg.Enabled,
+		"chatId":         cfg.ChatID,
+		"botTokenSet":    set,
+		"botTokenMasked": masked,
+	})
+}
+
+func (h *Handler) apiUpdateTelegram(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Enabled  *bool   `json:"enabled,omitempty"`
+		BotToken *string `json:"botToken,omitempty"`
+		ChatID   *string `json:"chatId,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(400)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid JSON"})
+		return
+	}
+	enabled := config.GetTelegramConfig().Enabled
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
+	if err := config.UpdateTelegramConfig(enabled, req.BotToken, req.ChatID); err != nil {
+		w.WriteHeader(400)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+func (h *Handler) apiTestTelegram(w http.ResponseWriter, r *http.Request) {
+	if err := SendTelegramTest(); err != nil {
+		w.WriteHeader(502)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}

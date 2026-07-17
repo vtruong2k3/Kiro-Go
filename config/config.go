@@ -59,9 +59,9 @@ type Account struct {
 	TokenEndpoint string `json:"tokenEndpoint,omitempty"` // IdP OAuth2 token endpoint (e.g. login.microsoftonline.com/{tenant}/oauth2/v2.0/token)
 	IssuerURL     string `json:"issuerUrl,omitempty"`     // IdP OIDC issuer URL (e.g. login.microsoftonline.com/{tenant}/v2.0)
 	Scopes        string `json:"scopes,omitempty"`        // Space-separated OAuth2 scopes used for refresh
-	ExpiresAt    int64  `json:"expiresAt,omitempty"`    // Token expiration timestamp (Unix seconds)
-	MachineId    string `json:"machineId,omitempty"`    // UUID machine identifier for request tracking
-	ProfileArn   string `json:"profileArn,omitempty"`   // CodeWhisperer/Kiro profile ARN for generation requests
+	ExpiresAt     int64  `json:"expiresAt,omitempty"`     // Token expiration timestamp (Unix seconds)
+	MachineId     string `json:"machineId,omitempty"`     // UUID machine identifier for request tracking
+	ProfileArn    string `json:"profileArn,omitempty"`    // CodeWhisperer/Kiro profile ARN for generation requests
 
 	// Antigravity (Google Cloud Code / Gemini Code Assist) fields.
 	// Only populated when AuthMethod == "antigravity" / Provider == "Antigravity".
@@ -208,11 +208,11 @@ type Config struct {
 	// Keep false when the service is exposed directly (clients can spoof headers).
 	TrustProxyHeaders bool `json:"trustProxyHeaders,omitempty"`
 	// BlockedIPs is a global deny-list of client IPs (exact match) for /v1/* requests.
-	BlockedIPs  []string `json:"blockedIPs,omitempty"`
-	KiroVersion string   `json:"kiroVersion,omitempty"`
-	SystemVersion string        `json:"systemVersion,omitempty"`
-	NodeVersion   string        `json:"nodeVersion,omitempty"`
-	Accounts      []Account     `json:"accounts"` // Registered Kiro accounts
+	BlockedIPs    []string  `json:"blockedIPs,omitempty"`
+	KiroVersion   string    `json:"kiroVersion,omitempty"`
+	SystemVersion string    `json:"systemVersion,omitempty"`
+	NodeVersion   string    `json:"nodeVersion,omitempty"`
+	Accounts      []Account `json:"accounts"` // Registered Kiro accounts
 
 	// Thinking mode configuration for extended reasoning output
 	ThinkingSuffix       string `json:"thinkingSuffix,omitempty"`       // Model suffix to trigger thinking mode (default: "-thinking")
@@ -286,12 +286,22 @@ type Config struct {
 	// Can be overridden by the LOG_LEVEL environment variable.
 	LogLevel string `json:"logLevel,omitempty"`
 
+	// Telegram is optional operator alerting via Telegram Bot API (ban/quota/errors).
+	Telegram TelegramConfig `json:"telegram,omitempty"`
+
 	// Global statistics (persisted across restarts)
 	TotalRequests   int     `json:"totalRequests,omitempty"`   // Total API requests received
 	SuccessRequests int     `json:"successRequests,omitempty"` // Successful requests count
 	FailedRequests  int     `json:"failedRequests,omitempty"`  // Failed requests count
 	TotalTokens     int     `json:"totalTokens,omitempty"`     // Total tokens processed
 	TotalCredits    float64 `json:"totalCredits,omitempty"`    // Total credits consumed
+}
+
+// TelegramConfig is optional operator alerting via Telegram Bot API.
+type TelegramConfig struct {
+	Enabled  bool   `json:"enabled"`
+	BotToken string `json:"botToken,omitempty"`
+	ChatID   string `json:"chatId,omitempty"`
 }
 
 // ModelFallbackTarget is one alternate model to try after the native pool for the
@@ -1008,7 +1018,6 @@ func UpdatePreferredEndpoint(endpoint string) error {
 	return Save()
 }
 
-
 // GetModelFallback returns the ordered fallback targets for a requested model.
 // Matching is case-insensitive on the model id. Returns nil when no chain is configured.
 func GetModelFallback(model string) []ModelFallbackTarget {
@@ -1166,6 +1175,56 @@ func GetModelCreditRates() map[string]float64 {
 		out[k] = v
 	}
 	return out
+}
+
+// GetTelegramConfig returns a copy of the Telegram notification settings.
+func GetTelegramConfig() TelegramConfig {
+	cfgLock.RLock()
+	defer cfgLock.RUnlock()
+	if cfg == nil {
+		return TelegramConfig{}
+	}
+	return cfg.Telegram
+}
+
+// UpdateTelegramConfig validates and persists Telegram notification settings.
+// botToken:
+//   - nil → keep the existing token (UI masked field omitted the value)
+//   - pointer to "" → clear the stored token
+//   - non-empty → replace
+//
+// chatID:
+//   - nil → keep the existing chat id
+//   - otherwise → replace with the trimmed value (may be empty when disabled)
+//
+// When enabled is true, the effective token and chat id must both be non-empty.
+func UpdateTelegramConfig(enabled bool, botToken *string, chatID *string) error {
+	cfgLock.Lock()
+	defer cfgLock.Unlock()
+	if cfg == nil {
+		return fmt.Errorf("config not loaded")
+	}
+
+	next := cfg.Telegram
+	next.Enabled = enabled
+	if botToken != nil {
+		next.BotToken = strings.TrimSpace(*botToken)
+	}
+	if chatID != nil {
+		next.ChatID = strings.TrimSpace(*chatID)
+	}
+
+	if next.Enabled {
+		if next.BotToken == "" {
+			return fmt.Errorf("telegram bot token is required when notifications are enabled")
+		}
+		if next.ChatID == "" {
+			return fmt.Errorf("telegram chat id is required when notifications are enabled")
+		}
+	}
+
+	cfg.Telegram = next
+	return Save()
 }
 
 // UpdateBillingConfig validates and persists tokenUsageMultiplier + modelCreditRates

@@ -88,7 +88,43 @@ func (h *Handler) disableAccountOverage(account *config.Account) {
 	h.pool.Reload()
 }
 
+// classifyAccountFailure maps a failure to a Telegram event type without side effects.
+// fromTokenRefresh prefers EventTokenRefresh for auth/default failures on the refresh path.
+func classifyAccountFailure(account *config.Account, err error, fromTokenRefresh bool) string {
+	if account == nil || err == nil {
+		return ""
+	}
+	if isKiroAPIKeyAccount(account) {
+		return EventSoft
+	}
+	errMsg := err.Error()
+	switch {
+	case isOverageErrorMessage(errMsg):
+		return EventOverage
+	case isQuotaErrorMessage(errMsg):
+		return EventQuota
+	case isSuspensionErrorMessage(errMsg):
+		return EventBan
+	case isProfileUnavailableErrorMessage(errMsg):
+		return EventSoft
+	case isAuthErrorMessage(errMsg):
+		if fromTokenRefresh {
+			return EventTokenRefresh
+		}
+		return EventBan
+	default:
+		if fromTokenRefresh {
+			return EventTokenRefresh
+		}
+		return EventSoft
+	}
+}
+
 func (h *Handler) handleAccountFailure(account *config.Account, err error) {
+	h.handleAccountFailureEx(account, err, false)
+}
+
+func (h *Handler) handleAccountFailureEx(account *config.Account, err error, fromTokenRefresh bool) {
 	if account == nil || err == nil {
 		return
 	}
@@ -97,10 +133,12 @@ func (h *Handler) handleAccountFailure(account *config.Account, err error) {
 	// 403s are often transient (region backoff). Soft-fail only; never auto-ban.
 	if isKiroAPIKeyAccount(account) {
 		h.pool.RecordError(account.ID, false)
+		NotifyAccountEvent(account, EventSoft, err.Error())
 		return
 	}
 
 	errMsg := err.Error()
+	eventType := classifyAccountFailure(account, err, fromTokenRefresh)
 	switch {
 	case isOverageErrorMessage(errMsg):
 		h.disableAccountOverage(account)
@@ -119,4 +157,6 @@ func (h *Handler) handleAccountFailure(account *config.Account, err error) {
 	default:
 		h.pool.RecordError(account.ID, false)
 	}
+
+	NotifyAccountEvent(account, eventType, errMsg)
 }

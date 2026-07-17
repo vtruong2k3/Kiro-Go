@@ -28,7 +28,7 @@ export async function loadSettings() {
   const d = await res.json();
   $('requireApiKey').checked = d.requireApiKey;
   $('allowOverUsage').checked = d.allowOverUsage || false;
-  await Promise.all([loadThinkingConfig(), loadEndpointConfig(), loadProxyConfig(), loadPromptFilter(), loadBillingConfig(), loadApiKeys(), loadSecuritySettings()]);
+  await Promise.all([loadThinkingConfig(), loadEndpointConfig(), loadProxyConfig(), loadPromptFilter(), loadBillingConfig(), loadTelegramConfig(), loadApiKeys(), loadSecuritySettings()]);
   refreshCustomSelects();
 }
 export async function loadThinkingConfig() {
@@ -1589,4 +1589,55 @@ export function bindBillingEvents() {
     state.creditRates.splice(idx, 1);
     renderCreditRateRows();
   });
+}
+
+// Telegram notifications
+export async function loadTelegramConfig() {
+  try {
+    const res = await api('/telegram');
+    const d = await res.json();
+    const en = $('telegramEnabled');
+    if (en) en.checked = !!d.enabled;
+    const chat = $('telegramChatId');
+    if (chat) chat.value = d.chatId || '';
+    const tok = $('telegramBotToken');
+    if (tok) {
+      tok.value = '';
+      if (d.botTokenSet && d.botTokenMasked) {
+        tok.placeholder = d.botTokenMasked;
+      } else {
+        tok.placeholder = '';
+      }
+    }
+  } catch (e) {
+    // leave defaults
+  }
+}
+
+export async function saveTelegramConfig() {
+  const enabled = !!($('telegramEnabled') && $('telegramEnabled').checked);
+  const chatId = (($('telegramChatId') && $('telegramChatId').value) || '').trim();
+  const body = { enabled, chatId };
+  const tokVal = (($('telegramBotToken') && $('telegramBotToken').value) || '').trim();
+  if (tokVal) body.botToken = tokVal;
+  try {
+    const res = await api('/telegram', { method: 'POST', body: JSON.stringify(body) });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok || d.success === false) throw new Error(d.error || t('common.saveFailed'));
+    toast(t('settings.telegramSaved'), 'success');
+    await loadTelegramConfig();
+  } catch (e) {
+    toast((e && e.message) || t('common.saveFailed'), 'error');
+  }
+}
+
+export async function testTelegramConfig() {
+  try {
+    const res = await api('/telegram/test', { method: 'POST', body: '{}' });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok || d.success === false) throw new Error(d.error || t('settings.telegramTestFailed'));
+    toast(t('settings.telegramTestOk'), 'success');
+  } catch (e) {
+    toast((e && e.message) || t('settings.telegramTestFailed'), 'error');
+  }
 }

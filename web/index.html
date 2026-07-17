@@ -463,6 +463,10 @@
                 <i class="fa-solid fa-coins" aria-hidden="true"></i>
                 <span data-i18n="settings.navBilling"></span>
               </button>
+              <button type="button" class="settings-nav-btn" data-settings-section="telegram">
+                <i class="fa-brands fa-telegram" aria-hidden="true"></i>
+                <span data-i18n="settings.navTelegram"></span>
+              </button>
               <button type="button" class="settings-nav-btn" data-settings-section="thinking">
                 <i class="fa-solid fa-brain" aria-hidden="true"></i>
                 <span data-i18n="settings.navThinking"></span>
@@ -542,6 +546,42 @@
                   </div>
                   <div class="settings-card-footer">
                     <button class="btn btn-primary btn-sm" id="saveBillingBtn" type="button" data-i18n="settings.saveBilling"></button>
+                  </div>
+                </div>
+              </section>
+
+              <!-- Telegram notifications -->
+              <section id="settings-telegram" class="settings-section" data-settings-section="telegram">
+                <div class="settings-card">
+                  <div class="settings-card-header">
+                    <span class="settings-card-icon" aria-hidden="true"><i class="fa-brands fa-telegram"></i></span>
+                    <div class="settings-card-heading">
+                      <span class="card-title" data-i18n="settings.telegramSettings"></span>
+                      <p class="settings-card-desc" data-i18n="settings.telegramDesc"></p>
+                    </div>
+                  </div>
+                  <div class="settings-card-body">
+                    <div class="settings-row">
+                      <div class="settings-row-text">
+                        <p class="settings-row-title" data-i18n="settings.telegramEnabled"></p>
+                        <p class="settings-row-hint" data-i18n="settings.telegramEnabledHint"></p>
+                      </div>
+                      <span class="switch"><input type="checkbox" id="telegramEnabled" /><span class="slider"></span></span>
+                    </div>
+                    <div class="form-group">
+                      <label for="telegramBotToken" data-i18n="settings.telegramBotToken"></label>
+                      <input type="password" id="telegramBotToken" autocomplete="off" spellcheck="false" />
+                      <small class="muted-text" id="telegramBotTokenHint" data-i18n="settings.telegramBotTokenHint"></small>
+                    </div>
+                    <div class="form-group">
+                      <label for="telegramChatId" data-i18n="settings.telegramChatId"></label>
+                      <input type="text" id="telegramChatId" autocomplete="off" spellcheck="false" />
+                      <small class="muted-text" data-i18n="settings.telegramChatIdHint"></small>
+                    </div>
+                  </div>
+                  <div class="settings-card-footer" style="gap:8px;display:flex;flex-wrap:wrap">
+                    <button class="btn btn-primary btn-sm" id="saveTelegramBtn" type="button" data-i18n="settings.saveTelegram"></button>
+                    <button class="btn btn-outline btn-sm" id="testTelegramBtn" type="button" data-i18n="settings.testTelegram"></button>
                   </div>
                 </div>
               </section>
