@@ -688,6 +688,8 @@
   "settings.testTelegram": "发送测试",
   "settings.telegramTestOk": "测试消息已发送",
   "settings.telegramTestFailed": "测试消息发送失败",
+  "settings.telegramTokenRequired": "启用 Telegram 告警前请先填写 Bot Token",
+  "settings.telegramChatRequired": "启用 Telegram 告警前请先填写 Chat ID",
   "provider.remotekiro": "远程 Kiro-Go",
   "providerDesc.remotekiro": "通过 Base URL + API Key 接入另一台 Kiro-Go",
   "modal.remotekiroTitle": "远程 Kiro-Go",

@@ -688,6 +688,8 @@
   "settings.testTelegram": "Gửi thử",
   "settings.telegramTestOk": "Đã gửi tin nhắn thử",
   "settings.telegramTestFailed": "Gửi tin thử thất bại",
+  "settings.telegramTokenRequired": "Nhập bot token trước khi bật thông báo Telegram",
+  "settings.telegramChatRequired": "Nhập Chat ID trước khi bật thông báo Telegram",
   "provider.remotekiro": "Remote Kiro-Go",
   "providerDesc.remotekiro": "Instance Kiro-Go khác qua base URL + API key",
   "modal.remotekiroTitle": "Remote Kiro-Go",

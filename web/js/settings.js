@@ -1484,6 +1484,7 @@ export async function loadTelegramConfig() {
   try {
     const res = await api('/telegram');
     const d = await res.json();
+    state.telegramBotTokenSet = !!d.botTokenSet;
     const en = $('telegramEnabled');
     if (en) en.checked = !!d.enabled;
     const chat = $('telegramChatId');
@@ -1505,8 +1506,26 @@ export async function loadTelegramConfig() {
 export async function saveTelegramConfig() {
   const enabled = !!($('telegramEnabled') && $('telegramEnabled').checked);
   const chatId = (($('telegramChatId') && $('telegramChatId').value) || '').trim();
-  const body = { enabled, chatId };
   const tokVal = (($('telegramBotToken') && $('telegramBotToken').value) || '').trim();
+
+  // Enabling requires both a chat id and a token (either newly entered or already saved).
+  // Validate up front so the user gets a specific message instead of a generic 400.
+  if (enabled) {
+    if (!tokVal && !state.telegramBotTokenSet) {
+      toast(t('settings.telegramTokenRequired'), 'warning');
+      const tokEl = $('telegramBotToken');
+      if (tokEl) tokEl.focus();
+      return;
+    }
+    if (!chatId) {
+      toast(t('settings.telegramChatRequired'), 'warning');
+      const chatEl = $('telegramChatId');
+      if (chatEl) chatEl.focus();
+      return;
+    }
+  }
+
+  const body = { enabled, chatId };
   if (tokVal) body.botToken = tokVal;
   try {
     const res = await api('/telegram', { method: 'POST', body: JSON.stringify(body) });
@@ -1516,6 +1535,8 @@ export async function saveTelegramConfig() {
     await loadTelegramConfig();
   } catch (e) {
     toast((e && e.message) || t('common.saveFailed'), 'error');
+    // Re-sync the toggle with the server so it doesn't appear "on" when the save was rejected.
+    await loadTelegramConfig();
   }
 }
 

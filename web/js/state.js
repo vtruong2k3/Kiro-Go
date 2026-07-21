@@ -35,6 +35,7 @@ export const state = {
   currentProviderFilter: '',
   privacyModeEnabled: true,
   promptRules: [],
+  telegramBotTokenSet: false,
   builderIdSession: '',
   builderIdPollTimer: null,
   iamSession: '',

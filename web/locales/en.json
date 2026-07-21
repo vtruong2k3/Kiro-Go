@@ -688,6 +688,8 @@
   "settings.testTelegram": "Send Test",
   "settings.telegramTestOk": "Test message sent",
   "settings.telegramTestFailed": "Failed to send test message",
+  "settings.telegramTokenRequired": "Enter a bot token before enabling Telegram alerts",
+  "settings.telegramChatRequired": "Enter a chat ID before enabling Telegram alerts",
   "provider.remotekiro": "Remote Kiro-Go",
   "providerDesc.remotekiro": "Another Kiro-Go instance via base URL + API key",
   "modal.remotekiroTitle": "Remote Kiro-Go",
