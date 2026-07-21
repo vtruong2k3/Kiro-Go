@@ -1507,12 +1507,11 @@ func (h *Handler) handleClaudeStream(w http.ResponseWriter, payload *KiroPayload
 		}
 		outputTokens = estimateClaudeOutputTokens(outputContent, thinkingOutput, toolUses)
 
-		billedTokens, credits := billUsage(credits, model, inputTokens, outputTokens)
-		h.recordSuccessForApiKey(apiKeyID, billedTokens, credits)
+		h.recordSuccessForApiKey(apiKeyID, inputTokens, outputTokens, credits)
 		h.pool.RecordSuccess(account.ID)
-		h.pool.UpdateStats(account.ID, billedTokens, credits)
+		h.pool.UpdateStats(account.ID, inputTokens+outputTokens, credits)
 		h.promptCache.Update(account.ID, cacheProfile)
-		h.recordSuccessLogMeta("claude", model, account.ID, billedTokens, credits, time.Since(reqStart).Milliseconds(), clientIP, apiKeyID, usedProvider)
+		h.recordSuccessLogMeta("claude", model, account.ID, inputTokens+outputTokens, credits, time.Since(reqStart).Milliseconds(), clientIP, apiKeyID, usedProvider)
 
 		stopReason := "end_turn"
 		if len(toolUses) > 0 {
@@ -1687,18 +1686,14 @@ func (h *Handler) recordSuccess(inputTokens, outputTokens int, credits float64) 
 }
 
 // recordSuccessForApiKey is recordSuccess + per-API-key usage attribution.
-// tokens is the already-billed total (after TokenUsageMultiplier). When apiKeyID
-// is empty (legacy single-key path or unauthenticated path), only the global
-// counters are updated. Persistence errors are logged but do not propagate.
-func (h *Handler) recordSuccessForApiKey(apiKeyID string, tokens int, credits float64) {
-	if tokens < 0 {
-		tokens = 0
-	}
-	h.recordSuccess(tokens, 0, credits)
+// When apiKeyID is empty (legacy single-key path or unauthenticated path), only the
+// global counters are updated. Persistence errors are logged but do not propagate.
+func (h *Handler) recordSuccessForApiKey(apiKeyID string, inputTokens, outputTokens int, credits float64) {
+	h.recordSuccess(inputTokens, outputTokens, credits)
 	if apiKeyID == "" {
 		return
 	}
-	if err := config.RecordApiKeyUsage(apiKeyID, int64(tokens), credits); err != nil {
+	if err := config.RecordApiKeyUsage(apiKeyID, int64(inputTokens+outputTokens), credits); err != nil {
 		logger.Warnf("[ApiKey] failed to record usage for key %s: %v", apiKeyID, err)
 	}
 }
@@ -1889,12 +1884,11 @@ func (h *Handler) handleClaudeNonStream(w http.ResponseWriter, payload *KiroPayl
 		}
 		outputTokens = estimateClaudeOutputTokens(finalContent, rawThinkingContent, toolUses)
 
-		billedTokens, credits := billUsage(credits, model, inputTokens, outputTokens)
-		h.recordSuccessForApiKey(apiKeyID, billedTokens, credits)
+		h.recordSuccessForApiKey(apiKeyID, inputTokens, outputTokens, credits)
 		h.pool.RecordSuccess(account.ID)
-		h.pool.UpdateStats(account.ID, billedTokens, credits)
+		h.pool.UpdateStats(account.ID, inputTokens+outputTokens, credits)
 		h.promptCache.Update(account.ID, cacheProfile)
-		h.recordSuccessLogMeta("claude", model, account.ID, billedTokens, credits, time.Since(reqStart).Milliseconds(), clientIP, apiKeyID, usedProvider)
+		h.recordSuccessLogMeta("claude", model, account.ID, inputTokens+outputTokens, credits, time.Since(reqStart).Milliseconds(), clientIP, apiKeyID, usedProvider)
 
 		responseThinkingContent := rawThinkingContent
 		includeEmptyThinkingBlock := thinking && thinkingOpts.OmitDisplay && rawThinkingContent != ""
@@ -2442,11 +2436,10 @@ func (h *Handler) handleOpenAIStream(w http.ResponseWriter, payload *KiroPayload
 			outputTokens += estimateApproxTokens(tc.Function.Arguments)
 		}
 
-		billedTokens, credits := billUsage(credits, model, inputTokens, outputTokens)
-		h.recordSuccessForApiKey(apiKeyID, billedTokens, credits)
+		h.recordSuccessForApiKey(apiKeyID, inputTokens, outputTokens, credits)
 		h.pool.RecordSuccess(account.ID)
-		h.pool.UpdateStats(account.ID, billedTokens, credits)
-		h.recordSuccessLogMeta("openai", model, account.ID, billedTokens, credits, time.Since(reqStart).Milliseconds(), clientIP, apiKeyID, usedProvider)
+		h.pool.UpdateStats(account.ID, inputTokens+outputTokens, credits)
+		h.recordSuccessLogMeta("openai", model, account.ID, inputTokens+outputTokens, credits, time.Since(reqStart).Milliseconds(), clientIP, apiKeyID, usedProvider)
 
 		finishReason := "stop"
 		if len(toolCalls) > 0 {
@@ -2553,11 +2546,10 @@ func (h *Handler) handleOpenAINonStream(w http.ResponseWriter, payload *KiroPayl
 		}
 		outputTokens = estimateOpenAIOutputTokens(finalContent, reasoningContent, toolUses)
 
-		billedTokens, credits := billUsage(credits, model, inputTokens, outputTokens)
-		h.recordSuccessForApiKey(apiKeyID, billedTokens, credits)
+		h.recordSuccessForApiKey(apiKeyID, inputTokens, outputTokens, credits)
 		h.pool.RecordSuccess(account.ID)
-		h.pool.UpdateStats(account.ID, billedTokens, credits)
-		h.recordSuccessLogMeta("openai", model, account.ID, billedTokens, credits, time.Since(reqStart).Milliseconds(), clientIP, apiKeyID, usedProvider)
+		h.pool.UpdateStats(account.ID, inputTokens+outputTokens, credits)
+		h.recordSuccessLogMeta("openai", model, account.ID, inputTokens+outputTokens, credits, time.Since(reqStart).Milliseconds(), clientIP, apiKeyID, usedProvider)
 
 		thinkingFormat := config.GetThinkingConfig().OpenAIFormat
 		resp := KiroToOpenAIResponseWithReasoning(finalContent, reasoningContent, toolUses, inputTokens, outputTokens, model, thinkingFormat)
@@ -2815,10 +2807,6 @@ func (h *Handler) handleAdminAPI(w http.ResponseWriter, r *http.Request) {
 		h.apiGetPromptFilter(w, r)
 	case path == "/prompt-filter" && r.Method == "POST":
 		h.apiUpdatePromptFilter(w, r)
-	case path == "/billing" && r.Method == "GET":
-		h.apiGetBilling(w, r)
-	case path == "/billing" && r.Method == "POST":
-		h.apiUpdateBilling(w, r)
 	case path == "/telegram" && r.Method == "GET":
 		h.apiGetTelegram(w, r)
 	case path == "/telegram" && r.Method == "POST":
@@ -4549,36 +4537,6 @@ func (h *Handler) apiUpdatePromptFilter(w http.ResponseWriter, r *http.Request) 
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
-func (h *Handler) apiGetBilling(w http.ResponseWriter, r *http.Request) {
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"tokenUsageMultiplier": config.GetTokenUsageMultiplier(),
-		"modelCreditRates":     config.GetModelCreditRates(),
-		"builtinDefaultRate":   config.BuiltinModelCreditRate,
-	})
-}
-
-func (h *Handler) apiUpdateBilling(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		TokenUsageMultiplier *float64           `json:"tokenUsageMultiplier,omitempty"`
-		ModelCreditRates     map[string]float64 `json:"modelCreditRates"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.WriteHeader(400)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid JSON"})
-		return
-	}
-	multiplier := config.GetTokenUsageMultiplier()
-	if req.TokenUsageMultiplier != nil {
-		multiplier = *req.TokenUsageMultiplier
-	}
-	// Allow nil body map to mean "clear rates"; missing key still arrives as nil.
-	if err := config.UpdateBillingConfig(req.ModelCreditRates, multiplier); err != nil {
-		w.WriteHeader(400)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-	json.NewEncoder(w).Encode(map[string]bool{"success": true})
-}
 
 func (h *Handler) apiGetTelegram(w http.ResponseWriter, r *http.Request) {
 	cfg := config.GetTelegramConfig()

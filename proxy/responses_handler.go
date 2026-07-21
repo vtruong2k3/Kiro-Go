@@ -192,11 +192,10 @@ func (h *Handler) handleResponsesNonStream(
 		}
 		outputTokens = estimateOpenAIOutputTokens(finalContent, reasoningContent, toolUses)
 
-		billedTokens, credits := billUsage(credits, model, inputTokens, outputTokens)
-		h.recordSuccessForApiKey(apiKeyID, billedTokens, credits)
+		h.recordSuccessForApiKey(apiKeyID, inputTokens, outputTokens, credits)
 		h.pool.RecordSuccess(account.ID)
-		h.pool.UpdateStats(account.ID, billedTokens, credits)
-		h.recordSuccessLogMeta("responses", model, account.ID, billedTokens, credits, time.Since(reqStart).Milliseconds(), clientIP, apiKeyID, usedProvider)
+		h.pool.UpdateStats(account.ID, inputTokens+outputTokens, credits)
+		h.recordSuccessLogMeta("responses", model, account.ID, inputTokens+outputTokens, credits, time.Since(reqStart).Milliseconds(), clientIP, apiKeyID, usedProvider)
 
 		respObj := buildResponsesObject(respID, model, finalContent, toolUses, inputTokens, outputTokens, req)
 		respObj.StoredInput = storedInput
@@ -545,11 +544,10 @@ func (h *Handler) handleResponsesStream(
 		}
 		outputTokens = estimateOpenAIOutputTokens(finalContent, reasoning, toolUses)
 
-		billedTokens, credits := billUsage(credits, model, inputTokens, outputTokens)
-		h.recordSuccessForApiKey(apiKeyID, billedTokens, credits)
+		h.recordSuccessForApiKey(apiKeyID, inputTokens, outputTokens, credits)
 		h.pool.RecordSuccess(account.ID)
-		h.pool.UpdateStats(account.ID, billedTokens, credits)
-		h.recordSuccessLogMeta("responses", model, account.ID, billedTokens, credits, time.Since(reqStart).Milliseconds(), clientIP, apiKeyID, usedProvider)
+		h.pool.UpdateStats(account.ID, inputTokens+outputTokens, credits)
+		h.recordSuccessLogMeta("responses", model, account.ID, inputTokens+outputTokens, credits, time.Since(reqStart).Milliseconds(), clientIP, apiKeyID, usedProvider)
 
 		respObj := buildResponsesObject(respID, model, finalContent, toolUses, inputTokens, outputTokens, req)
 		respObj.CreatedAt = createdAt

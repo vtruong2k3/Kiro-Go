@@ -250,19 +250,6 @@ type Config struct {
 	//   }
 	ModelFallback map[string][]ModelFallbackTarget `json:"modelFallback,omitempty"`
 
-	// ModelCreditRates maps a model id (or prefix) to credits charged per 1k tokens
-	// (input+output combined). Used when a request is served by a non-Kiro provider
-	// (Grok/Codex/Antigravity) that does not emit Kiro meteringEvent credits, so
-	// API-key credit balances still decrement as if the original model ran on Kiro.
-	// Matching is longest-prefix (case-insensitive). Key "default" is the fallback rate.
-	// Example: {"claude-opus-4": 0.015, "claude-sonnet": 0.003, "default": 0.003}
-	ModelCreditRates map[string]float64 `json:"modelCreditRates,omitempty"`
-
-	// TokenUsageMultiplier scales tokens billed to API keys (and estimated credits)
-	// after a successful request. 1.0 / 0 / unset means no scaling. Applied at
-	// record time only — client-facing usage fields stay raw.
-	TokenUsageMultiplier float64 `json:"tokenUsageMultiplier,omitempty"`
-
 	// AllowOverUsage allows accounts to continue serving requests even when their
 	// usage quota has been exhausted. When enabled, the pool will not skip accounts
 	// solely because usageCurrent >= usageLimit.
@@ -1093,101 +1080,6 @@ func UpdateModelFallback(m map[string][]ModelFallbackTarget) error {
 	return Save()
 }
 
-// GetModelCreditRate returns credits charged per 1k tokens for the given model.
-// Matching is longest case-insensitive prefix against ModelCreditRates keys.
-// Falls back to the "default" key, then to BuiltinModelCreditRate when nothing is configured.
-func GetModelCreditRate(model string) float64 {
-	cfgLock.RLock()
-	defer cfgLock.RUnlock()
-	if cfg == nil || len(cfg.ModelCreditRates) == 0 {
-		return BuiltinModelCreditRate
-	}
-	key := strings.ToLower(strings.TrimSpace(model))
-	var bestKey string
-	var bestRate float64
-	var found bool
-	var defaultRate float64
-	var hasDefault bool
-	for k, rate := range cfg.ModelCreditRates {
-		norm := strings.ToLower(strings.TrimSpace(k))
-		if norm == "" {
-			continue
-		}
-		if norm == "default" {
-			defaultRate = rate
-			hasDefault = true
-			continue
-		}
-		if key == norm || strings.HasPrefix(key, norm) {
-			if !found || len(norm) > len(bestKey) {
-				bestKey = norm
-				bestRate = rate
-				found = true
-			}
-		}
-	}
-	if found {
-		return bestRate
-	}
-	if hasDefault {
-		return defaultRate
-	}
-	return BuiltinModelCreditRate
-}
-
-// UpdateModelCreditRates replaces the credit-rate map and persists. Pass nil/empty to clear.
-func UpdateModelCreditRates(rates map[string]float64) error {
-	cfgLock.Lock()
-	defer cfgLock.Unlock()
-	if len(rates) == 0 {
-		cfg.ModelCreditRates = nil
-	} else {
-		cleaned := make(map[string]float64, len(rates))
-		for k, v := range rates {
-			key := strings.TrimSpace(k)
-			if key == "" {
-				continue
-			}
-			cleaned[key] = v
-		}
-		if len(cleaned) == 0 {
-			cfg.ModelCreditRates = nil
-		} else {
-			cfg.ModelCreditRates = cleaned
-		}
-	}
-	return Save()
-}
-
-// BuiltinModelCreditRate is the hard-coded fallback when ModelCreditRates is empty
-// or has no matching prefix / "default" key.
-const BuiltinModelCreditRate = 0.003
-
-// GetTokenUsageMultiplier returns the token billing scale factor. Values <= 0
-// (including unset) mean no scaling and return 1.0.
-func GetTokenUsageMultiplier() float64 {
-	cfgLock.RLock()
-	defer cfgLock.RUnlock()
-	if cfg == nil || cfg.TokenUsageMultiplier <= 0 {
-		return 1.0
-	}
-	return cfg.TokenUsageMultiplier
-}
-
-// GetModelCreditRates returns a copy of the configured credit-rate map.
-func GetModelCreditRates() map[string]float64 {
-	cfgLock.RLock()
-	defer cfgLock.RUnlock()
-	if cfg == nil || len(cfg.ModelCreditRates) == 0 {
-		return map[string]float64{}
-	}
-	out := make(map[string]float64, len(cfg.ModelCreditRates))
-	for k, v := range cfg.ModelCreditRates {
-		out[k] = v
-	}
-	return out
-}
-
 // GetTelegramConfig returns a copy of the Telegram notification settings.
 func GetTelegramConfig() TelegramConfig {
 	cfgLock.RLock()
@@ -1235,38 +1127,6 @@ func UpdateTelegramConfig(enabled bool, botToken *string, chatID *string) error 
 	}
 
 	cfg.Telegram = next
-	return Save()
-}
-
-// UpdateBillingConfig validates and persists tokenUsageMultiplier + modelCreditRates
-// in a single Save(). multiplier must be > 0; each rate must be >= 0.
-func UpdateBillingConfig(rates map[string]float64, multiplier float64) error {
-	if multiplier <= 0 {
-		return fmt.Errorf("tokenUsageMultiplier must be > 0")
-	}
-	cleaned := make(map[string]float64, len(rates))
-	for k, v := range rates {
-		key := strings.TrimSpace(k)
-		if key == "" {
-			continue
-		}
-		if v < 0 {
-			return fmt.Errorf("credit rate for %q must be >= 0", key)
-		}
-		cleaned[key] = v
-	}
-
-	cfgLock.Lock()
-	defer cfgLock.Unlock()
-	if cfg == nil {
-		return fmt.Errorf("config not loaded")
-	}
-	cfg.TokenUsageMultiplier = multiplier
-	if len(cleaned) == 0 {
-		cfg.ModelCreditRates = nil
-	} else {
-		cfg.ModelCreditRates = cleaned
-	}
 	return Save()
 }
 

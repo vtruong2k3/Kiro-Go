@@ -459,10 +459,6 @@
                 <i class="fa-solid fa-gauge-high" aria-hidden="true"></i>
                 <span data-i18n="settings.navUsage"></span>
               </button>
-              <button type="button" class="settings-nav-btn" data-settings-section="billing">
-                <i class="fa-solid fa-coins" aria-hidden="true"></i>
-                <span data-i18n="settings.navBilling"></span>
-              </button>
               <button type="button" class="settings-nav-btn" data-settings-section="telegram">
                 <i class="fa-brands fa-telegram" aria-hidden="true"></i>
                 <span data-i18n="settings.navTelegram"></span>
@@ -515,38 +511,6 @@
                   </div>
                   <div class="settings-card-footer">
                     <button class="btn btn-primary btn-sm" id="saveOverUsageBtn" type="button" data-i18n="settings.saveUsage"></button>
-                  </div>
-                </div>
-              </section>
-
-              <!-- Billing settings -->
-              <section id="settings-billing" class="settings-section" data-settings-section="billing">
-                <div class="settings-card">
-                  <div class="settings-card-header">
-                    <span class="settings-card-icon" aria-hidden="true"><i class="fa-solid fa-coins"></i></span>
-                    <div class="settings-card-heading">
-                      <span class="card-title" data-i18n="settings.billingSettings"></span>
-                      <p class="settings-card-desc" data-i18n="settings.billingDesc"></p>
-                    </div>
-                  </div>
-                  <div class="settings-card-body">
-                    <div class="form-group">
-                      <label for="tokenUsageMultiplier" data-i18n="settings.tokenMultiplier"></label>
-                      <input type="number" id="tokenUsageMultiplier" min="0.01" step="0.01" value="1" />
-                      <small class="muted-text" data-i18n="settings.tokenMultiplierHint"></small>
-                    </div>
-                    <div class="settings-subsection">
-                      <h3 class="settings-subsection-title" data-i18n="settings.creditRatesTitle"></h3>
-                      <p class="settings-row-hint" data-i18n="settings.creditRatesHint"></p>
-                      <div id="creditRateRows" class="settings-rules-host"></div>
-                      <div class="settings-subsection-actions">
-                        <button class="btn btn-outline btn-sm" id="addCreditRateBtn" type="button" data-i18n="settings.addCreditRate"></button>
-                      </div>
-                    </div>
-                  </div>
-                  <div class="settings-card-footer">
-                    <button class="btn btn-outline btn-sm" id="resetBillingBtn" type="button" data-i18n="settings.resetBillingDefaults"></button>
-                    <button class="btn btn-primary btn-sm" id="saveBillingBtn" type="button" data-i18n="settings.saveBilling"></button>
                   </div>
                 </div>
               </section>

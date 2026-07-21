@@ -4,7 +4,6 @@ import (
 	"kiro-go/config"
 	"kiro-go/logger"
 	"kiro-go/pool"
-	"math"
 	"strings"
 )
 
@@ -56,66 +55,6 @@ func providerLabel(account *config.Account) string {
 		}
 		return "kiro"
 	}
-}
-
-// applyTokenUsageMultiplier scales raw token counts for API-key / estimated-credit
-// billing. Multiplier <= 0 is treated as 1.0 by config.GetTokenUsageMultiplier.
-func applyTokenUsageMultiplier(rawTokens int) int {
-	if rawTokens <= 0 {
-		return 0
-	}
-	mult := config.GetTokenUsageMultiplier()
-	if mult == 1.0 {
-		return rawTokens
-	}
-	return int(math.Round(float64(rawTokens) * mult))
-}
-
-// estimateCreditsForModel charges credits for a successful call that did not
-// receive a Kiro meteringEvent (typical for Grok/Codex/Antigravity). Rate is
-// taken from config.ModelCreditRates against the ORIGINAL client-facing model so
-// fallback still bills at the price of the model the user requested.
-//
-// totalTokens should already include any token-usage multiplier so estimated
-// credits stay consistent with billed tokens.
-//
-// Formula: credits = totalTokens / 1000 * rate(model)
-func estimateCreditsForModel(model string, totalTokens int) float64 {
-	if totalTokens <= 0 {
-		return 0
-	}
-	rate := config.GetModelCreditRate(model)
-	if rate <= 0 {
-		return 0
-	}
-	return float64(totalTokens) / 1000.0 * rate
-}
-
-// resolveCredits returns the credits to bill for a successful request.
-// Prefer the upstream metering value when present (real Kiro credits); otherwise
-// estimate from the original model using billedTokens (already multiplier-scaled)
-// so API-key credit balances still decrement when the call was answered by a
-// fallback provider.
-func resolveCredits(upstreamCredits float64, originalModel string, billedTokens int) float64 {
-	if upstreamCredits > 0 {
-		return upstreamCredits
-	}
-	return estimateCreditsForModel(originalModel, billedTokens)
-}
-
-// billUsage applies the token-usage multiplier and resolves credits for a
-// successful request. Metering credits from Kiro are never multiplied; estimated
-// credits use billed tokens so rates and the multiplier stay consistent.
-//
-// Client-facing usage fields should keep using the raw input/output counts.
-func billUsage(upstreamCredits float64, originalModel string, inputTokens, outputTokens int) (billedTokens int, credits float64) {
-	raw := inputTokens + outputTokens
-	if raw < 0 {
-		raw = 0
-	}
-	billedTokens = applyTokenUsageMultiplier(raw)
-	credits = resolveCredits(upstreamCredits, originalModel, billedTokens)
-	return billedTokens, credits
 }
 
 // maxFallbackAccountAttempts caps how many alternate-provider accounts we try
