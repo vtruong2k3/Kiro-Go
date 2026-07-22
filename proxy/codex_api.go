@@ -31,9 +31,11 @@ import (
 
 const (
 	codexResponsesURL = "https://chatgpt.com/backend-api/codex/responses"
-	codexUserAgent    = "codex_cli_rs/0.143.0"
-	codexOriginator   = "codex_cli_rs"
-	codexVersion      = "0.143.0"
+	// Keep in sync with the latest openai/codex rust CLI release — upstream
+	// gates newer models (e.g. gpt-5.6-sol) on the User-Agent / version headers.
+	codexUserAgent  = "codex_cli_rs/0.145.0"
+	codexOriginator = "codex_cli_rs"
+	codexVersion    = "0.145.0"
 )
 
 // CallCodexAPI routes a generation request to the Codex (ChatGPT) upstream.
