@@ -37,9 +37,18 @@ type codexModel struct {
 
 // codexModels mirrors 9router registry/codex.js: text models (each with a
 // "-review" quota-family twin), reasoning-effort variants, and image models.
+// GPT 5.6 ships as sol/terra/luna variants upstream — bare "gpt-5.6" is kept as
+// a legacy alias that maps to gpt-5.6-sol so older clients keep working.
 var codexModels = []codexModel{
-	{ID: "gpt-5.6", Name: "GPT 5.6"},
-	{ID: "gpt-5.6-review", Name: "GPT 5.6 Review", UpstreamModelID: "gpt-5.6"},
+	{ID: "gpt-5.6-sol", Name: "GPT 5.6 Sol"},
+	{ID: "gpt-5.6-sol-review", Name: "GPT 5.6 Sol Review", UpstreamModelID: "gpt-5.6-sol"},
+	{ID: "gpt-5.6-terra", Name: "GPT 5.6 Terra"},
+	{ID: "gpt-5.6-terra-review", Name: "GPT 5.6 Terra Review", UpstreamModelID: "gpt-5.6-terra"},
+	{ID: "gpt-5.6-luna", Name: "GPT 5.6 Luna"},
+	{ID: "gpt-5.6-luna-review", Name: "GPT 5.6 Luna Review", UpstreamModelID: "gpt-5.6-luna"},
+	// Legacy aliases (not real upstream ids).
+	{ID: "gpt-5.6", Name: "GPT 5.6", UpstreamModelID: "gpt-5.6-sol"},
+	{ID: "gpt-5.6-review", Name: "GPT 5.6 Review", UpstreamModelID: "gpt-5.6-sol"},
 	{ID: "gpt-5.5", Name: "GPT 5.5", UpstreamModelID: "gpt-5.5"},
 	{ID: "gpt-5.5-review", Name: "GPT 5.5 Review", UpstreamModelID: "gpt-5.5"},
 	{ID: "gpt-5.4", Name: "GPT 5.4"},
@@ -108,23 +117,51 @@ func codexReviewUpstream(model string) string {
 	return m
 }
 
-var codexEffortSuffixes = []string{"none", "low", "medium", "high", "xhigh"}
+// codexEffortSuffixes are trailing "-<effort>" tokens stripped from model ids.
+// Longer tokens come first so "-xhigh" wins over "-high".
+// "max" is accepted as a client alias and normalized to wire "xhigh" later
+// (mirrors 9router normalizeReasoningEffort for gpt-5.6-sol).
+var codexEffortSuffixes = []string{"xhigh", "minimal", "medium", "none", "high", "low", "max"}
+
+// normalizeCodexReasoningEffort maps client effort aliases to Codex wire values.
+func normalizeCodexReasoningEffort(effort string) string {
+	if effort == "max" {
+		return "xhigh"
+	}
+	return effort
+}
 
 // resolveCodexModel maps a requested model id to the real upstream model and the
-// reasoning effort implied by any suffix. It first resolves virtual "-review"
-// twins to their base, then strips a trailing "-<effort>" suffix. When no suffix
-// is present, effort is "" and the caller applies the default ("low").
+// reasoning effort implied by any suffix. Order:
+//  1. catalog virtual ids (e.g. "-review", legacy "gpt-5.6") → UpstreamModelID
+//  2. generic trailing "-review" strip for unknown combos
+//  3. trailing "-<effort>" strip
+//  4. legacy bare "gpt-5.6" → "gpt-5.6-sol" (covers gpt-5.6-high etc.)
+//
+// When no effort suffix is present, effort is "" and the caller defaults to "low".
 func resolveCodexModel(model string) (upstream string, effort string) {
 	m := codexReviewUpstream(model)
 	if m == "" {
-		m = "gpt-5.5"
+		return "gpt-5.5", ""
+	}
+	if strings.HasSuffix(m, "-review") {
+		m = strings.TrimSuffix(m, "-review")
 	}
 	for _, level := range codexEffortSuffixes {
-		if strings.HasSuffix(m, "-"+level) {
-			return strings.TrimSuffix(m, "-"+level), level
+		suf := "-" + level
+		if strings.HasSuffix(m, suf) {
+			effort = level
+			m = strings.TrimSuffix(m, suf)
+			break
 		}
 	}
-	return m, ""
+	if m == "gpt-5.6" {
+		m = "gpt-5.6-sol"
+	}
+	if m == "" {
+		m = "gpt-5.5"
+	}
+	return m, effort
 }
 
 // codexServerIDPattern matches Codex server-generated item ids that cannot be
@@ -184,6 +221,7 @@ func BuildCodexResponsesRequest(sourceClaude *ClaudeRequest, sourceOpenAI *OpenA
 	if effort == "" {
 		effort = "low"
 	}
+	effort = normalizeCodexReasoningEffort(effort)
 	reasoning := map[string]interface{}{"effort": effort, "summary": "auto"}
 
 	body := map[string]interface{}{

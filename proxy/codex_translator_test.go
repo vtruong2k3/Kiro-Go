@@ -18,12 +18,79 @@ func TestResolveCodexModel_ReviewAndEffortSuffix(t *testing.T) {
 		{"gpt-5.5-review", "gpt-5.5", ""},
 		{"gpt-5.3-codex-high-review", "gpt-5.3-codex", "high"},
 		{"", "gpt-5.5", ""},
+		// GPT 5.6 ships as sol/terra/luna upstream.
+		{"gpt-5.6-sol", "gpt-5.6-sol", ""},
+		{"gpt-5.6-terra", "gpt-5.6-terra", ""},
+		{"gpt-5.6-luna", "gpt-5.6-luna", ""},
+		{"gpt-5.6-sol-review", "gpt-5.6-sol", ""},
+		{"gpt-5.6-terra-review", "gpt-5.6-terra", ""},
+		{"gpt-5.6-luna-review", "gpt-5.6-luna", ""},
+		{"gpt-5.6-sol-high", "gpt-5.6-sol", "high"},
+		{"gpt-5.6-sol-xhigh", "gpt-5.6-sol", "xhigh"},
+		{"gpt-5.6-sol-minimal", "gpt-5.6-sol", "minimal"},
+		{"gpt-5.6-sol-max", "gpt-5.6-sol", "max"}, // wire-normalized later to xhigh
+		// Legacy bare gpt-5.6 aliases to sol (including effort variants).
+		{"gpt-5.6", "gpt-5.6-sol", ""},
+		{"gpt-5.6-review", "gpt-5.6-sol", ""},
+		{"gpt-5.6-high", "gpt-5.6-sol", "high"},
+		{"gpt-5.6-max", "gpt-5.6-sol", "max"},
 	}
 	for _, c := range cases {
 		gotUpstream, gotEffort := resolveCodexModel(c.in)
 		if gotUpstream != c.wantUpstream || gotEffort != c.wantEffort {
 			t.Errorf("resolveCodexModel(%q) = (%q,%q), want (%q,%q)",
 				c.in, gotUpstream, gotEffort, c.wantUpstream, c.wantEffort)
+		}
+	}
+}
+
+func TestBuildCodexResponsesRequest_GPT56SolMaxEffort(t *testing.T) {
+	req := &ClaudeRequest{
+		Model:    "gpt-5.6-sol-max",
+		Messages: []ClaudeMessage{{Role: "user", Content: "hi"}},
+	}
+	body, err := BuildCodexResponsesRequest(req, nil, "gpt-5.6-sol-max", "s", false)
+	if err != nil {
+		t.Fatalf("BuildCodexResponsesRequest: %v", err)
+	}
+	if body["model"] != "gpt-5.6-sol" {
+		t.Errorf("model = %v, want gpt-5.6-sol", body["model"])
+	}
+	reasoning := body["reasoning"].(map[string]interface{})
+	if reasoning["effort"] != "xhigh" {
+		t.Errorf("reasoning.effort = %v, want xhigh (max→xhigh)", reasoning["effort"])
+	}
+}
+
+func TestBuildCodexResponsesRequest_LegacyGPT56Alias(t *testing.T) {
+	req := &ClaudeRequest{
+		Model:    "gpt-5.6",
+		Messages: []ClaudeMessage{{Role: "user", Content: "hi"}},
+	}
+	body, err := BuildCodexResponsesRequest(req, nil, "gpt-5.6", "s", false)
+	if err != nil {
+		t.Fatalf("BuildCodexResponsesRequest: %v", err)
+	}
+	if body["model"] != "gpt-5.6-sol" {
+		t.Errorf("model = %v, want gpt-5.6-sol (legacy alias)", body["model"])
+	}
+}
+
+func TestCodexModelIDs_IncludesGPT56Variants(t *testing.T) {
+	ids := codexModelIDs()
+	want := []string{
+		"gpt-5.6-sol", "gpt-5.6-sol-review",
+		"gpt-5.6-terra", "gpt-5.6-terra-review",
+		"gpt-5.6-luna", "gpt-5.6-luna-review",
+		"gpt-5.6", "gpt-5.6-review", // legacy aliases stay routable
+	}
+	have := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		have[id] = true
+	}
+	for _, id := range want {
+		if !have[id] {
+			t.Errorf("codexModelIDs missing %q", id)
 		}
 	}
 }
