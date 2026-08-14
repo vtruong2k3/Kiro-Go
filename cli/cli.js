@@ -8,12 +8,14 @@
 //   2. pick a port that is actually free
 //   3. run the server in the foreground, forwarding signals and its exit code
 //   4. open the admin UI once the port answers
+//   5. notify the user (non-blocking) when a newer npm package is available
 //
 // Everything else (accounts, keys, routing) lives in the server and its admin
 // UI. This file stays a launcher on purpose.
 
 const { spawn } = require("child_process");
 const fs = require("fs");
+const https = require("https");
 const net = require("net");
 const os = require("os");
 const path = require("path");
@@ -28,6 +30,60 @@ const {
 
 const DEFAULT_PORT = 8080;
 const MAX_PORT_ATTEMPTS = 10;
+
+// ---------------------------------------------------------------- update check
+
+// Fetch latest version from the npm registry in the background.
+// Prints a notice box if the installed version is behind — never throws.
+function checkForUpdate() {
+  return new Promise((resolve) => {
+    const url = `https://registry.npmjs.org/${pkg.name}/latest`;
+    const req = https.get(url, { timeout: 5000 }, (res) => {
+      let raw = "";
+      res.on("data", (chunk) => (raw += chunk));
+      res.on("end", () => {
+        try {
+          const latest = JSON.parse(raw).version;
+          if (latest && latest !== pkg.version && isNewer(latest, pkg.version)) {
+            resolve(latest);
+          } else {
+            resolve(null);
+          }
+        } catch {
+          resolve(null);
+        }
+      });
+    });
+    req.on("error", () => resolve(null));
+    req.on("timeout", () => { req.destroy(); resolve(null); });
+  });
+}
+
+// Simple semver comparison — only handles numeric major.minor.patch.
+function isNewer(a, b) {
+  const parse = (v) => v.split(".").map(Number);
+  const [aMaj, aMin, aPat] = parse(a);
+  const [bMaj, bMin, bPat] = parse(b);
+  if (aMaj !== bMaj) return aMaj > bMaj;
+  if (aMin !== bMin) return aMin > bMin;
+  return aPat > bPat;
+}
+
+function printUpdateNotice(latest) {
+  const current = pkg.version;
+  const name = pkg.name;
+  const lines = [
+    `   Update available: ${current}  →  ${latest}   `,
+    `   Run: npm install -g ${name}@latest          `,
+  ];
+  const width = Math.max(...lines.map((l) => l.length));
+  const border = "─".repeat(width);
+  console.log(`\n\x1b[33m┌${border}┐`);
+  for (const line of lines) {
+    console.log(`│${line.padEnd(width)}│`);
+  }
+  console.log(`└${border}┘\x1b[0m`);
+}
 
 // ---------------------------------------------------------------- arg parsing
 
@@ -294,6 +350,10 @@ async function main() {
   if (ready.exitedWith !== undefined) return ready.exitedWith;
 
   const adminURL = `http://localhost:${port}/admin`;
+
+  // Start update check in background (non-blocking — we don't await here).
+  const updatePromise = checkForUpdate();
+
   if (ready.ok) {
     const lan = host === "0.0.0.0" ? lanAddress() : null;
     console.log("");
@@ -305,6 +365,11 @@ async function main() {
     if (lan) console.log(`   Network  http://${lan}:${port}  ⚠️  reachable from your LAN`);
     console.log("");
     if (opts.open) openBrowser(adminURL);
+
+    // Print update notice once the check resolves (usually within 1-2 s).
+    updatePromise.then((latest) => {
+      if (latest) printUpdateNotice(latest);
+    });
   } else {
     console.warn(`⚠️  server did not answer on port ${port} yet — check the log above`);
   }

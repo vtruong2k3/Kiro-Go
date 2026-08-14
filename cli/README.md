@@ -89,6 +89,20 @@ docker run -p 8080:8080 \
 
 **Vũ Trường** · [github.com/vtruong2k3](https://github.com/vtruong2k3)
 
+## Releasing (Maintainer)
+
+Để đẩy bản build mới lên GitHub Release và npm package registry (bằng script tất-cả-trong-một):
+
+1. Tạo GitHub PAT Token tại [https://github.com/settings/tokens/new](https://github.com/settings/tokens/new) (chọn scope `repo`)
+2. Lấy NPM Automation Token tại [https://www.npmjs.com/settings/tokens](https://www.npmjs.com/settings/tokens)
+3. Chạy script từ thư mục gốc của project (thay `1.2.0` bằng version bạn muốn):
+
+```bash
+GITHUB_TOKEN=ghp_xxx NPM_TOKEN=npm_xxx bash scripts/release.sh 1.2.0
+```
+
+Script này sẽ tự động: bump version, build React frontend, cross-compile Go binary cho 6 platform, tạo GitHub Release + upload binaries, và cuối cùng publish package lên npm.
+
 ## License
 
 MIT

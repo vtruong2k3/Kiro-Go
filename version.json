@@ -1,6 +1,6 @@
 {
-  "version": "1.1.6",
-  "changelog": "Docs rewrite, proxy-kiro npm package, portable binary with embedded admin UI.",
+  "version": "1.1.8",
+  "changelog": "Auto update-check: notifies users when a newer npm version is available.",
   "download": "https://github.com/vtruong2k3/Kiro-Go",
   "author": "Vũ Trường"
 }
