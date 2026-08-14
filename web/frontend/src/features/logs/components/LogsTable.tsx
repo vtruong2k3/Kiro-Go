@@ -106,10 +106,12 @@ function TokensCell({ log }: { log: LiveLog }) {
         </span>
       )}
       <span className="inline-flex flex-col items-end gap-0.5 text-[10px] leading-tight">
-        <span className="text-sky-600 dark:text-sky-400">in {formatNumber(input)}</span>
+        <span className="inline-flex items-center gap-2">
+          <span className="text-sky-600 dark:text-sky-400">in {formatNumber(input)}</span>
+          <span className="text-violet-600 dark:text-violet-400">out {formatNumber(output)}</span>
+        </span>
         <span className="text-emerald-600 dark:text-emerald-400">cache-r {formatNumber(cacheRead)}</span>
         <span className="text-amber-600 dark:text-amber-400">cache-w {formatNumber(cacheCreation)}</span>
-        <span>out {formatNumber(output)}</span>
         <span className="border-t border-border/60 pt-0.5 font-semibold">total {formatNumber(total)}</span>
       </span>
     </span>
