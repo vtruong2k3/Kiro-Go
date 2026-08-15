@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Archive, Bot, Copy, Download, FileJson, FileText, ImagePlus, MessageSquarePlus, Pencil, Pin, PinOff, RotateCcw, Send, Square, Trash2, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { useChatConversations, useChatMessages, useChatModels } from '@/hooks/queries/useChat'
 import { chatService } from '@/services/chat.service'
 import { qk } from '@/config/queryKeys'
 import type { ChatMessage, ChatStreamEvent } from '@/types/chat'
-import { Button } from '@/components/ui/button'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { SafeMarkdown } from '@/components/shared/SafeMarkdown'
+import { Sheet, SheetContent } from '@/components/ui/sheet'
 import { useConfirm } from '@/components/shared/ConfirmDialog'
+import { ChatTranscript } from './components/ChatTranscript'
+import { ChatComposer } from './components/ChatComposer'
+import { ChatConversationSidebar } from './components/ChatConversationSidebar'
+import { ChatHeader } from './components/ChatHeader'
 import { chatExportJSON, chatExportMarkdown, downloadChatExport } from './chatExport'
 import { failChatStream, pendingChatMessages, reduceChatStream, validateChatUploads, type ChatStreamState } from './chatLogic'
 
@@ -46,8 +47,8 @@ export default function ChatPage() {
   const [imageQuality, setImageQuality] = useState('auto')
   const [uploading, setUploading] = useState(false)
   const [imageGeneration, setImageGeneration] = useState<PendingImageGeneration | null>(null)
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
   const controller = useRef<AbortController | null>(null)
-  const fileInput = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => {
     const timeout = window.setTimeout(() => setDebouncedSearch(search), 250)
@@ -72,6 +73,14 @@ export default function ChatPage() {
   useEffect(() => {
     if (streamState?.persistedIds && pendingStreamMessages.length === 0) setStreamState(null)
   }, [pendingStreamMessages.length, streamState])
+
+  useEffect(() => {
+    if (!imageGeneration) return
+    const ids = new Set(transcript.map((message) => message.id))
+    if (ids.has(imageGeneration.user.id) && ids.has(imageGeneration.assistant.id)) {
+      setImageGeneration(null)
+    }
+  }, [imageGeneration, transcript])
 
   async function renameConversation() {
     if (!activeConversation) return
@@ -127,6 +136,7 @@ export default function ChatPage() {
     if ((!content && !pendingImages.length) || controller.current) return
     let conversationId = activeId
     const model = models.data?.find((item) => item.id === selectedModel)
+    if (imageMode && !model) return toast.error('Select an image generation model first')
     if (pendingImages.length && model && !model.capabilities.vision) {
       toast.error('The selected model does not support image input')
       return
@@ -143,7 +153,10 @@ export default function ChatPage() {
     const abort = new AbortController()
     controller.current = abort
     if (imageMode) {
-      if (!model) return toast.error('Select an image generation model first')
+      if (!model) {
+        controller.current = null
+        return toast.error('Select an image generation model first')
+      }
       const now = Date.now()
       const userId = requestId()
       const pending: PendingImageGeneration = {
@@ -235,127 +248,114 @@ export default function ChatPage() {
     }
   }
 
+  const sidebar = (
+    <ChatConversationSidebar
+      conversations={conversations.data?.data ?? []}
+      activeId={activeId}
+      status={conversationStatus}
+      search={search}
+      loading={conversations.isLoading}
+      className="h-full"
+      onCreate={createConversation}
+      onSelect={(id) => {
+        setActiveId(id)
+        setMobileSidebarOpen(false)
+      }}
+      onStatusChange={(status) => {
+        setConversationStatus(status)
+        setActiveId('')
+      }}
+      onSearchChange={setSearch}
+      onTogglePin={(conversation) => {
+        void chatService
+          .updateConversation(conversation.id, { pinned: !conversation.pinned })
+          .then(() => queryClient.invalidateQueries({ queryKey: qk.chatConversations }))
+      }}
+      onToggleArchive={(conversation) => {
+        void chatService
+          .updateConversation(conversation.id, {
+            status: conversation.status === 'active' ? 'archived' : 'active',
+          })
+          .then(() => {
+            if (activeId === conversation.id) setActiveId('')
+            return queryClient.invalidateQueries({ queryKey: qk.chatConversations })
+          })
+      }}
+      onDelete={(id) => { void removeConversation(id) }}
+    />
+  )
+
   return (
-    <div className="flex h-[calc(100dvh-7rem)] min-h-[32rem] overflow-hidden rounded-xl border bg-card">
-      <aside className="hidden w-72 shrink-0 flex-col border-r bg-muted/20 md:flex">
-        <div className="space-y-2 p-3">
-          <Button className="w-full" onClick={createConversation}><MessageSquarePlus />New chat</Button>
-          <div className="grid grid-cols-2 gap-1">
-            <Button size="sm" variant={conversationStatus === 'active' ? 'secondary' : 'ghost'} onClick={() => { setConversationStatus('active'); setActiveId('') }}>Active</Button>
-            <Button size="sm" variant={conversationStatus === 'archived' ? 'secondary' : 'ghost'} onClick={() => { setConversationStatus('archived'); setActiveId('') }}>Archived</Button>
-          </div>
-          <input className="h-9 w-full rounded-md border bg-background px-3 text-sm outline-none" placeholder="Search chats…" value={search} onChange={(event) => setSearch(event.target.value)} />
-        </div>
-        <div className="flex-1 space-y-1 overflow-y-auto px-2 pb-3">
-          {(conversations.data?.data ?? []).map((item) => (
-            <div key={item.id} className={`group flex items-center rounded-lg ${activeId === item.id ? 'bg-accent' : 'hover:bg-accent/60'}`}>
-              <button className="min-w-0 flex-1 truncate px-3 py-2 text-left text-sm" onClick={() => setActiveId(item.id)}>{item.title || item.model}</button>
-              <div className="flex items-center pr-1 opacity-0 group-hover:opacity-100">
-                <Button variant="ghost" size="icon" className="size-7" aria-label={item.pinned ? 'Unpin conversation' : 'Pin conversation'} onClick={() => chatService.updateConversation(item.id, { pinned: !item.pinned }).then(() => queryClient.invalidateQueries({ queryKey: qk.chatConversations }))}>{item.pinned ? <PinOff className="size-3.5" /> : <Pin className="size-3.5" />}</Button>
-                <Button variant="ghost" size="icon" className="size-7" aria-label={item.status === 'active' ? 'Archive conversation' : 'Restore conversation'} onClick={() => chatService.updateConversation(item.id, { status: item.status === 'active' ? 'archived' : 'active' }).then(() => { if (activeId === item.id) setActiveId(''); return queryClient.invalidateQueries({ queryKey: qk.chatConversations }) })}>{item.status === 'active' ? <Archive className="size-3.5" /> : <RotateCcw className="size-3.5" />}</Button>
-                <Button variant="ghost" size="icon" className="size-7" onClick={() => removeConversation(item.id)}><Trash2 className="size-3.5" /></Button>
-              </div>
-            </div>
-          ))}
-        </div>
-      </aside>
+    <div className="flex h-[calc(100dvh-7rem)] min-h-[32rem] overflow-hidden rounded-2xl border bg-background shadow-sm">
+      <div className="hidden w-72 shrink-0 border-r border-sidebar-border md:block">
+        {sidebar}
+      </div>
+      <Sheet open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen}>
+        <SheetContent side="left" className="w-[min(20rem,calc(100%-2rem))] gap-0 p-0" showCloseButton={false}>
+          {sidebar}
+        </SheetContent>
+      </Sheet>
 
       <section className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center justify-between gap-3 border-b px-4 py-3">
-          <div className="flex min-w-0 items-center gap-2 font-medium"><Bot className="size-5 shrink-0" /><span className="truncate">{activeConversation?.title || 'AI Chat'}</span>{activeConversation && <Button type="button" variant="ghost" size="icon" className="size-7" onClick={renameConversation} aria-label="Rename conversation"><Pencil className="size-3.5" /></Button>}</div>
-          <div className="flex items-center gap-2">
-            {activeConversation && <><Button type="button" variant="ghost" size="icon" onClick={() => exportConversation('markdown')} aria-label="Export Markdown"><FileText className="size-4" /></Button><Button type="button" variant="ghost" size="icon" onClick={() => exportConversation('json')} aria-label="Export JSON"><FileJson className="size-4" /></Button></>}
-            <Button
-              type="button"
-              variant={imageMode ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => {
-                const next = !imageMode
-                setImageMode(next)
-                setPendingImages([])
-                if (next) {
-                  const imageModel = models.data?.find((item) => item.capabilities.imageGeneration)
-                  if (imageModel) setSelectedModel(imageModel.id)
-                  else toast.error('No image generation model is available')
-                }
-              }}
-            ><ImagePlus className="size-4" />{imageMode ? 'Create image' : 'Chat'}</Button>
-            {imageMode && <>
-              <Select value={imageSize} onValueChange={setImageSize}><SelectTrigger className="w-32"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="auto">Auto size</SelectItem><SelectItem value="1024x1024">Square</SelectItem><SelectItem value="1536x1024">Landscape</SelectItem><SelectItem value="1024x1536">Portrait</SelectItem></SelectContent></Select>
-              <Select value={imageQuality} onValueChange={setImageQuality}><SelectTrigger className="w-32"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="auto">Auto quality</SelectItem><SelectItem value="low">Low</SelectItem><SelectItem value="medium">Medium</SelectItem><SelectItem value="high">High</SelectItem></SelectContent></Select>
-            </>}
-            <Select value={selectedModel} onValueChange={setSelectedModel}>
-              <SelectTrigger className="w-[min(22rem,60vw)]"><SelectValue placeholder="Select provider and model" /></SelectTrigger>
-              <SelectContent>{(models.data ?? []).filter((model) => !imageMode || model.capabilities.imageGeneration).map((model) => <SelectItem key={model.id} value={model.id}>{model.provider} · {model.displayName}</SelectItem>)}</SelectContent>
-            </Select>
-          </div>
-        </header>
+        <ChatHeader
+          conversation={activeConversation}
+          models={models.data ?? []}
+          selectedModel={selectedModel}
+          imageMode={imageMode}
+          imageSize={imageSize}
+          imageQuality={imageQuality}
+          onOpenSidebar={() => setMobileSidebarOpen(true)}
+          onRename={() => { void renameConversation() }}
+          onExport={exportConversation}
+          onToggleImageMode={() => {
+            const next = !imageMode
+            setImageMode(next)
+            setPendingImages([])
+            if (next) {
+              const imageModel = models.data?.find((item) => item.capabilities.imageGeneration)
+              if (imageModel) setSelectedModel(imageModel.id)
+              else toast.error('No image generation model is available')
+            }
+          }}
+          onModelChange={setSelectedModel}
+          onImageSizeChange={setImageSize}
+          onImageQualityChange={setImageQuality}
+        />
 
-        <div className="flex-1 overflow-y-auto px-4 py-6">
-          {!transcript.length && !streamState && !imageGeneration ? (
-            <div className="grid h-full place-items-center text-center text-muted-foreground"><div><Bot className="mx-auto mb-3 size-10" /><p className="font-medium text-foreground">How can I help?</p><p className="text-sm">Choose a provider and model, then start a conversation.</p></div></div>
-          ) : (
-            <div className="mx-auto max-w-3xl space-y-6">
-              {transcript.map((message, index) => <MessageBubble key={message.id} message={message} userPrompt={message.role === 'assistant' ? transcript.slice(0, index).findLast((candidate) => candidate.role === 'user')?.content : undefined} onRetry={(prompt, image) => { setDraft(prompt); setImageMode(image) }} />)}
-              {imageGeneration && <><MessageBubble message={imageGeneration.user} /><MessageBubble message={imageGeneration.assistant} userPrompt={imageGeneration.prompt} onRetry={(prompt) => { setDraft(prompt); setSelectedModel(`${imageGeneration.provider}:${imageGeneration.model}`); setImageSize(imageGeneration.size); setImageQuality(imageGeneration.quality); setImageMode(true) }} /></>}
-              {pendingStreamMessages.map((message) => <MessageBubble key={message.id} message={message} />)}
-              {streamState?.reasoning && pendingStreamMessages.some((message) => message.role === 'assistant') && <p className="text-xs text-muted-foreground">Thinking: {streamState.reasoning}</p>}
-            </div>
-          )}
-        </div>
+        <ChatTranscript
+          transcript={transcript}
+          pendingStreamMessages={pendingStreamMessages}
+          streamState={streamState}
+          imageGeneration={imageGeneration}
+          loading={messages.isLoading}
+          error={messages.isError}
+          onRetry={(prompt, image) => {
+            setDraft(prompt)
+            setImageMode(image)
+          }}
+          onRetryImage={(turn) => {
+            setDraft(turn.prompt)
+            setSelectedModel(`${turn.provider}:${turn.model}`)
+            setImageSize(turn.size)
+            setImageQuality(turn.quality)
+            setImageMode(true)
+          }}
+        />
 
-        <div className="border-t p-3">
-          <div className="mx-auto max-w-3xl">
-            {pendingImages.length > 0 && <div className="mb-2 flex gap-2 overflow-x-auto">{pendingImages.map((file, index) => <ImagePreview key={`${file.name}-${file.lastModified}-${index}`} file={file} onRemove={() => setPendingImages((current) => current.filter((_, itemIndex) => itemIndex !== index))} />)}</div>}
-            <div
-              className="flex items-end gap-2 rounded-xl border bg-background p-2 shadow-sm"
-              onDragOver={(event) => event.preventDefault()}
-              onDrop={(event) => { event.preventDefault(); addImages(Array.from(event.dataTransfer.files)) }}
-            >
-              <input ref={fileInput} type="file" accept="image/png,image/jpeg,image/webp" multiple className="hidden" onChange={(event) => { addImages(Array.from(event.target.files ?? [])); event.target.value = '' }} />
-              {!imageMode && <Button type="button" size="icon" variant="ghost" onClick={() => fileInput.current?.click()} disabled={Boolean(controller.current) || pendingImages.length >= 4 || models.data?.find((item) => item.id === selectedModel)?.capabilities.vision === false} aria-label="Attach images"><ImagePlus className="size-4" /></Button>}
-              <textarea className="max-h-48 min-h-11 flex-1 resize-none bg-transparent px-2 py-2 text-sm outline-none" rows={1} placeholder={imageMode ? 'Describe the image to create…' : 'Message AI…'} value={draft} onChange={(event) => setDraft(event.target.value)} onPaste={(event) => { if (!imageMode) { const files = Array.from(event.clipboardData.files); if (files.length) addImages(files) } }} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send() } }} disabled={Boolean(controller.current)} />
-              {controller.current ? <Button size="icon" variant="destructive" onClick={() => controller.current?.abort()}><Square className="size-4" /></Button> : <Button size="icon" onClick={send} disabled={(!draft.trim() && !pendingImages.length) || uploading}><Send className="size-4" /></Button>}
-            </div>
-          </div>
-        </div>
+        <ChatComposer
+          draft={draft}
+          pendingImages={pendingImages}
+          imageMode={imageMode}
+          busy={Boolean(controller.current)}
+          uploading={uploading}
+          selectedModel={models.data?.find((item) => item.id === selectedModel)}
+          onDraftChange={setDraft}
+          onAddImages={addImages}
+          onRemoveImage={(index) => setPendingImages((current) => current.filter((_, itemIndex) => itemIndex !== index))}
+          onSubmit={async () => { await send() }}
+          onStop={() => controller.current?.abort()}
+        />
       </section>
-    </div>
-  )
-}
-
-function ImagePreview({ file, onRemove }: { file: File; onRemove: () => void }) {
-  const [url, setURL] = useState('')
-  useEffect(() => {
-    const objectURL = URL.createObjectURL(file)
-    setURL(objectURL)
-    return () => URL.revokeObjectURL(objectURL)
-  }, [file])
-  return <div className="group relative size-20 shrink-0 overflow-hidden rounded-lg border bg-muted">{url && <img src={url} alt={file.name} className="size-full object-cover" />}<Button type="button" size="icon" variant="secondary" className="absolute right-1 top-1 size-6 opacity-90" onClick={onRemove} aria-label={`Remove ${file.name}`}><X className="size-3" /></Button></div>
-}
-
-function MessageBubble({ message, userPrompt, onRetry }: { message: ChatMessage; userPrompt?: string; onRetry?: (prompt: string, image: boolean) => void }) {
-  const assistant = message.role === 'assistant'
-  const content = message.content || (message.status === 'streaming' ? 'Generating…' : message.status === 'stopped' ? 'Stopped' : message.errorMessage)
-  const generatedImage = message.attachments?.some((attachment) => attachment.kind === 'image_output') ?? false
-  async function copyPrompt() {
-    if (!userPrompt) return
-    try {
-      await navigator.clipboard.writeText(userPrompt)
-      toast.success('Prompt copied')
-    } catch {
-      toast.error('Could not copy prompt')
-    }
-  }
-  return (
-    <div className={`flex ${assistant ? 'justify-start' : 'justify-end'}`}>
-      <div className={`min-w-0 max-w-[85%] rounded-2xl px-4 py-3 ${assistant ? 'bg-muted' : 'bg-primary text-primary-foreground'}`}>
-        {message.attachments?.length ? <div className="mb-3 grid grid-cols-2 gap-2">{message.attachments.map((attachment) => <div key={attachment.id} className="group/image relative"><img src={attachment.contentUrl} alt={attachment.name} className="max-h-96 w-full rounded-lg object-contain" loading="lazy" />{attachment.kind === 'image_output' && <a href={attachment.contentUrl} download={attachment.name} className="absolute right-2 top-2 grid size-8 place-items-center rounded-md bg-background/90 text-foreground opacity-0 shadow-sm transition-opacity group-hover/image:opacity-100" aria-label={`Download ${attachment.name}`}><Download className="size-4" /></a>}</div>)}</div> : null}
-        {assistant ? <SafeMarkdown>{content}</SafeMarkdown> : <div className="whitespace-pre-wrap text-sm">{content}</div>}
-        {assistant && message.status === 'error' && <div className="mt-2 text-xs text-destructive">{message.errorMessage}</div>}
-        {assistant && userPrompt && <div className="mt-2 flex gap-1"><Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => onRetry?.(userPrompt, generatedImage)}><RotateCcw className="size-3" />Retry</Button>{generatedImage && <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={copyPrompt}><Copy className="size-3" />Copy prompt</Button>}</div>}
-        {assistant && <details className="mt-2 text-xs opacity-70"><summary className="cursor-pointer">Details</summary><div className="mt-1 space-y-0.5"><div>{message.provider} · {message.model} · {message.status}</div><div>Input {message.inputTokens} · Output {message.outputTokens}</div><div>Cache read {message.cacheReadTokens} · Cache write {message.cacheCreationTokens}</div>{message.requestId && <div className="break-all">Request {message.requestId}</div>}</div></details>}
-      </div>
     </div>
   )
 }

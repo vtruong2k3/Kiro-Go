@@ -4,6 +4,8 @@
 @import "@fontsource-variable/geist";
 @import "@fontsource-variable/geist-mono";
 
+@source "../node_modules/streamdown/dist/*.js";
+
 /* Dark mode driven by a class on <html> (set by uiStore theme resolver),
    not the OS media query — so the 3-state system/light/dark toggle works. */
 @custom-variant dark (&:where(.dark, .dark *));
