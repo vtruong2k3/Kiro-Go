@@ -170,8 +170,11 @@ func TestChatTurnIdempotencyFinalizeAndMessageCursor(t *testing.T) {
 	if err != nil || len(page.Items) != 1 || page.NextCursor == "" {
 		t.Fatalf("message page=%+v err=%v", page, err)
 	}
+	if page.Items[0].ID != "user" {
+		t.Fatalf("first message=%q, want user", page.Items[0].ID)
+	}
 	next, err := s.ListChatMessages("chat", page.NextCursor, 1)
-	if err != nil || len(next.Items) != 1 || next.Items[0].ID == page.Items[0].ID {
+	if err != nil || len(next.Items) != 1 || next.Items[0].ID != "assistant" {
 		t.Fatalf("next=%+v err=%v", next, err)
 	}
 	attachments, err := s.ListChatAttachments("chat")

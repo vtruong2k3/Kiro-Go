@@ -481,10 +481,10 @@ func (s *Store) ListChatMessages(conversationID, cursor string, limit int) (Chat
 	query := `SELECT ` + chatMessageColumns + ` FROM chat_messages WHERE conversation_id=?`
 	args := []any{conversationID}
 	if cursor != "" {
-		query += ` AND (created_at > ? OR (created_at=? AND id>?))`
-		args = append(args, cur.Time, cur.Time, cur.ID)
+		query += ` AND (created_at > ? OR (created_at=? AND rowid>(SELECT rowid FROM chat_messages WHERE conversation_id=? AND id=?)))`
+		args = append(args, cur.Time, cur.Time, conversationID, cur.ID)
 	}
-	query += ` ORDER BY created_at,id LIMIT ?`
+	query += ` ORDER BY created_at,rowid LIMIT ?`
 	args = append(args, limit+1)
 	rows, err := db.Query(query, args...)
 	if err != nil {
