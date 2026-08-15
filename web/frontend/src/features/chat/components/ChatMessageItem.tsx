@@ -113,7 +113,23 @@ export function ChatMessageItem({
             <div className="whitespace-pre-wrap text-sm">{message.content}</div>
           )
         ) : message.status === 'streaming' ? (
-          <Shimmer className="text-sm">Generating…</Shimmer>
+          <div
+            role="status"
+            aria-live="polite"
+            aria-label="Assistant is generating a response"
+            className="flex min-h-7 items-center gap-2 text-sm text-muted-foreground"
+          >
+            <span className="flex items-center gap-1" aria-hidden="true">
+              {[0, 1, 2].map((dot) => (
+                <span
+                  key={dot}
+                  className="size-1.5 animate-pulse rounded-full bg-current motion-reduce:animate-none"
+                  style={{ animationDelay: `${dot * 160}ms` }}
+                />
+              ))}
+            </span>
+            <Shimmer duration={1.5}>Generating response</Shimmer>
+          </div>
         ) : message.status === 'stopped' ? (
           <p className="text-sm text-muted-foreground">Generation stopped</p>
         ) : message.status === 'error' ? (

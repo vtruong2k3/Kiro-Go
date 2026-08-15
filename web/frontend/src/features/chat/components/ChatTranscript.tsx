@@ -44,7 +44,7 @@ export function ChatTranscript({
   return (
     <Conversation className="min-h-0 bg-background">
       <ConversationContent className="mx-auto min-h-full w-full max-w-4xl gap-7 px-4 py-8 sm:px-8">
-        {loading ? (
+        {loading && empty ? (
           <ConversationEmptyState
             icon={<Bot className="size-9 animate-pulse" />}
             title="Loading conversation"

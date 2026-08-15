@@ -27,6 +27,74 @@ export interface ChatStreamState {
   persistedIds: boolean
 }
 
+interface OptimisticChatTurnInput {
+  conversationId: string
+  content: string
+  provider: string
+  model: string
+  now: number
+  createId: () => string
+}
+
+export function createOptimisticChatTurn({
+  conversationId,
+  content,
+  provider,
+  model,
+  now,
+  createId,
+}: OptimisticChatTurnInput): ChatStreamState {
+  const userId = createId()
+  const base = {
+    conversationId,
+    clientRequestId: '',
+    provider,
+    model,
+    errorCode: '',
+    errorMessage: '',
+    requestId: '',
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+    createdAt: now,
+    updatedAt: now,
+  }
+
+  return {
+    user: {
+      ...base,
+      id: userId,
+      parentMessageId: '',
+      role: 'user',
+      content,
+      status: 'complete',
+    },
+    message: {
+      ...base,
+      id: createId(),
+      parentMessageId: userId,
+      role: 'assistant',
+      content: '',
+      status: 'streaming',
+    },
+    reasoning: '',
+    done: false,
+    persistedIds: false,
+  }
+}
+
+export function setChatTurnConversation(
+  state: ChatStreamState,
+  conversationId: string,
+): ChatStreamState {
+  return {
+    ...state,
+    user: { ...state.user, conversationId },
+    message: { ...state.message, conversationId },
+  }
+}
+
 export function pendingChatMessages(transcript: ChatMessage[], state: ChatStreamState | null) {
   if (!state) return []
   const ids = new Set(transcript.map((message) => message.id))

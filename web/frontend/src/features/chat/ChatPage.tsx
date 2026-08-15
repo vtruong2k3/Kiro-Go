@@ -12,7 +12,7 @@ import { ChatComposer } from './components/ChatComposer'
 import { ChatConversationSidebar } from './components/ChatConversationSidebar'
 import { ChatHeader } from './components/ChatHeader'
 import { chatExportJSON, chatExportMarkdown, downloadChatExport } from './chatExport'
-import { failChatStream, pendingChatMessages, reconcileChatMessages, reduceChatStream, validateChatUploads, type ChatStreamState } from './chatLogic'
+import { createOptimisticChatTurn, failChatStream, pendingChatMessages, reconcileChatMessages, reduceChatStream, setChatTurnConversation, validateChatUploads, type ChatStreamState } from './chatLogic'
 
 interface PendingImageGeneration {
   prompt: string
@@ -137,118 +137,155 @@ export default function ChatPage() {
 
   async function send() {
     const content = draft.trim()
-    if ((!content && !pendingImages.length) || controller.current) return
-    let conversationId = activeId
+    const imageFiles = [...pendingImages]
+    if ((!content && !imageFiles.length) || controller.current) return
+
     const model = models.data?.find((item) => item.id === selectedModel)
     if (imageMode && !model) return toast.error('Select an image generation model first')
-    if (pendingImages.length && model && !model.capabilities.vision) {
+    if (imageFiles.length && model && !model.capabilities.vision) {
       toast.error('The selected model does not support image input')
       return
     }
-    if (!conversationId) {
-      if (!model) return toast.error('Select a model first')
-      const created = await chatService.createConversation({ provider: model.provider, model: model.model })
-      conversationId = created.id
-      setActiveId(created.id)
-    } else if (model) {
-      await chatService.updateConversation(conversationId, { provider: model.provider, model: model.model })
-    }
+    if (!activeId && !model) return toast.error('Select a model first')
 
     const abort = new AbortController()
     controller.current = abort
-    if (imageMode) {
-      if (!model) {
-        controller.current = null
-        return toast.error('Select an image generation model first')
+    const temporaryConversationId = activeId || `local-${requestId()}`
+    const optimistic = createOptimisticChatTurn({
+      conversationId: temporaryConversationId,
+      content,
+      provider: model?.provider ?? '',
+      model: model?.model ?? '',
+      now: Date.now(),
+      createId: requestId,
+    })
+
+    if (imageMode && model) {
+      setImageGeneration({
+        prompt: content,
+        provider: model.provider,
+        model: model.model,
+        size: imageSize,
+        quality: imageQuality,
+        user: optimistic.user,
+        assistant: optimistic.message,
+      })
+    } else {
+      setStreamState(optimistic)
+    }
+    setDraft('')
+    setPendingImages([])
+    setUploading(Boolean(imageMode || imageFiles.length))
+
+    let conversationId = activeId
+    let generationStarted = false
+
+    function restoreInput() {
+      setDraft((current) => current || content)
+      if (!imageFiles.length) return
+      setPendingImages((current) => {
+        const restored = validateChatUploads(current, imageFiles)
+        return restored.rejected ? current : restored.accepted
+      })
+    }
+
+    try {
+      if (!conversationId) {
+        if (!model) throw new Error('Select a model first')
+        const created = await chatService.createConversation({
+          provider: model.provider,
+          model: model.model,
+        })
+        conversationId = created.id
+        setActiveId(created.id)
+        if (imageMode) {
+          setImageGeneration((current) => current ? {
+            ...current,
+            user: { ...current.user, conversationId: created.id },
+            assistant: { ...current.assistant, conversationId: created.id },
+          } : current)
+        } else {
+          setStreamState((current) => current
+            ? setChatTurnConversation(current, created.id)
+            : current)
+        }
+      } else if (model) {
+        await chatService.updateConversation(conversationId, {
+          provider: model.provider,
+          model: model.model,
+        })
       }
-      const now = Date.now()
-      const userId = requestId()
-      const pending: PendingImageGeneration = {
-        prompt: content, provider: model.provider, model: model.model, size: imageSize, quality: imageQuality,
-        user: {
-          id: userId, conversationId, parentMessageId: '', clientRequestId: '', role: 'user', content,
-          provider: model.provider, model: model.model, status: 'complete', errorCode: '', errorMessage: '', requestId: '',
-          inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, createdAt: now, updatedAt: now,
-        },
-        assistant: {
-          id: requestId(), conversationId, parentMessageId: userId, clientRequestId: '', role: 'assistant', content: '',
-          provider: model.provider, model: model.model, status: 'streaming', errorCode: '', errorMessage: '', requestId: '',
-          inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, createdAt: now, updatedAt: now,
-        },
-      }
-      setImageGeneration(pending)
-      setUploading(true)
-      setDraft('')
-      try {
+
+      if (abort.signal.aborted) throw new DOMException('Generation stopped', 'AbortError')
+
+      if (imageMode) {
+        if (!model) throw new Error('Select an image generation model first')
+        generationStarted = true
         const result = await chatService.generateImage(conversationId, {
-          clientRequestId: requestId(), prompt: content, provider: model.provider, model: model.model,
-          size: imageSize, quality: imageQuality,
+          clientRequestId: requestId(),
+          prompt: content,
+          provider: model.provider,
+          model: model.model,
+          size: imageSize,
+          quality: imageQuality,
         }, abort.signal)
-        setImageGeneration({ ...pending, user: result.userMessage, assistant: { ...result.assistantMessage, attachments: result.attachments } })
-      } catch (error) {
-        const stopped = abort.signal.aborted
-        setImageGeneration({ ...pending, assistant: {
-          ...pending.assistant, status: stopped ? 'stopped' : 'error', errorCode: stopped ? 'generation_cancelled' : 'image_generation_failed',
-          errorMessage: stopped ? 'Image generation stopped' : error instanceof Error ? error.message : 'Image generation failed',
-        } })
-        setDraft(content)
-        if (!stopped) toast.error(error instanceof Error ? error.message : 'Image generation failed')
-      } finally {
-        controller.current = null
-        setUploading(false)
+        setImageGeneration((current) => current ? {
+          ...current,
+          user: result.userMessage,
+          assistant: {
+            ...result.assistantMessage,
+            attachments: result.attachments,
+          },
+        } : current)
+        return
+      }
+
+      let attachmentIds: string[] = []
+      if (imageFiles.length) {
+        const uploaded = await chatService.uploadAttachments(conversationId, imageFiles)
+        attachmentIds = uploaded.map((attachment) => attachment.id)
+      }
+      if (abort.signal.aborted) throw new DOMException('Generation stopped', 'AbortError')
+
+      setUploading(false)
+      generationStarted = true
+      await chatService.generate(
+        conversationId,
+        { clientRequestId: requestId(), content, attachmentIds },
+        abort.signal,
+        (event: ChatStreamEvent) => {
+          setStreamState((current) => current ? reduceChatStream(current, event) : current)
+        },
+      )
+    } catch (error) {
+      const stopped = abort.signal.aborted
+      const message = error instanceof Error ? error.message : 'Generation failed'
+      if (imageMode) {
+        setImageGeneration((current) => current ? {
+          ...current,
+          assistant: {
+            ...current.assistant,
+            status: stopped ? 'stopped' : 'error',
+            errorCode: stopped ? 'generation_cancelled' : 'image_generation_failed',
+            errorMessage: stopped ? 'Image generation stopped' : message,
+          },
+        } : current)
+      } else {
+        setStreamState((current) => current
+          ? failChatStream(current, stopped, message)
+          : current)
+      }
+      if (imageMode || !generationStarted) restoreInput()
+      if (!stopped) toast.error(message)
+    } finally {
+      controller.current = null
+      setUploading(false)
+      if (conversationId) {
         await Promise.all([
           queryClient.invalidateQueries({ queryKey: qk.chatMessages(conversationId) }),
           queryClient.invalidateQueries({ queryKey: qk.chatConversations }),
         ])
       }
-      return
-    }
-    setUploading(Boolean(pendingImages.length))
-    let attachmentIds: string[] = []
-    try {
-      if (pendingImages.length) {
-        const uploaded = await chatService.uploadAttachments(conversationId, pendingImages)
-        attachmentIds = uploaded.map((attachment) => attachment.id)
-      }
-    } catch (error) {
-      controller.current = null
-      setUploading(false)
-      toast.error(error instanceof Error ? error.message : 'Upload failed')
-      return
-    }
-    setUploading(false)
-    setDraft('')
-    setPendingImages([])
-    const now = Date.now()
-    const userId = requestId()
-    const userMessage: ChatMessage = {
-      id: userId, conversationId, parentMessageId: '', clientRequestId: '', role: 'user', content,
-      provider: model?.provider ?? '', model: model?.model ?? '', status: 'complete', errorCode: '', errorMessage: '',
-      requestId: '', inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0,
-      createdAt: now, updatedAt: now,
-    }
-    const initialMessage: ChatMessage = {
-      id: requestId(), conversationId, parentMessageId: userId, clientRequestId: '', role: 'assistant', content: '',
-      provider: model?.provider ?? '', model: model?.model ?? '', status: 'streaming', errorCode: '', errorMessage: '',
-      requestId: '', inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0,
-      createdAt: now, updatedAt: now,
-    }
-    setStreamState({ user: userMessage, message: initialMessage, reasoning: '', done: false, persistedIds: false })
-    try {
-      await chatService.generate(conversationId, { clientRequestId: requestId(), content, attachmentIds }, abort.signal, (event: ChatStreamEvent) => {
-        setStreamState((current) => current ? reduceChatStream(current, event) : current)
-      })
-    } catch (error) {
-      const stopped = abort.signal.aborted
-      const message = error instanceof Error ? error.message : 'Generation failed'
-      setStreamState((current) => current ? failChatStream(current, stopped, message) : current)
-      if (!stopped) toast.error(message)
-    } finally {
-      controller.current = null
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: qk.chatMessages(conversationId) }),
-        queryClient.invalidateQueries({ queryKey: qk.chatConversations }),
-      ])
     }
   }
 

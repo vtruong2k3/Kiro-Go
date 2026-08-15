@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatMessage } from '@/types/chat'
-import { failChatStream, pendingChatMessages, reconcileChatMessages, reduceChatStream, validateChatUploads } from './chatLogic'
+import { createOptimisticChatTurn, failChatStream, pendingChatMessages, reconcileChatMessages, reduceChatStream, setChatTurnConversation, validateChatUploads } from './chatLogic'
 
 function file(name: string, type: string, size = 1) {
   return new File([new Uint8Array(size)], name, { type })
@@ -40,6 +40,27 @@ describe('validateChatUploads', () => {
 })
 
 describe('chat stream state', () => {
+  it('creates an ordered optimistic turn before persistence and updates its conversation id', () => {
+    const ids = ['local-user', 'local-assistant']
+    const state = createOptimisticChatTurn({
+      conversationId: 'local-conversation',
+      content: 'hello now',
+      provider: 'kiro',
+      model: 'claude',
+      now: 42,
+      createId: () => ids.shift()!,
+    })
+
+    expect([state.user, state.message]).toMatchObject([
+      { id: 'local-user', role: 'user', content: 'hello now', status: 'complete', conversationId: 'local-conversation' },
+      { id: 'local-assistant', role: 'assistant', parentMessageId: 'local-user', status: 'streaming', conversationId: 'local-conversation' },
+    ])
+
+    const persistedConversation = setChatTurnConversation(state, 'conversation')
+    expect(persistedConversation.user).toMatchObject({ id: 'local-user', content: 'hello now', conversationId: 'conversation' })
+    expect(persistedConversation.message).toMatchObject({ id: 'local-assistant', parentMessageId: 'local-user', conversationId: 'conversation' })
+  })
+
   it('reconciles both ids and reduces reasoning, deltas, usage, and done', () => {
     let state = initialState()
     state = reduceChatStream(state, { event: 'generation.created', data: { generationId: 'g', userMessageId: 'user', assistantMessageId: 'assistant' } })
@@ -64,6 +85,10 @@ describe('chat stream state', () => {
     const state = reduceChatStream(initialState(), { event: 'generation.created', data: { generationId: 'g', userMessageId: 'user', assistantMessageId: 'assistant' } })
     const previous = { ...user, id: 'previous', content: 'previous turn' }
 
+    expect(reconcileChatMessages([], state)).toEqual([
+      state.user,
+      state.message,
+    ])
     expect(reconcileChatMessages([previous, { ...state.message, content: 'reply' }], state))
       .toEqual([previous, state.user, { ...state.message, content: 'reply' }])
     expect(reconcileChatMessages([previous, state.user], state))
