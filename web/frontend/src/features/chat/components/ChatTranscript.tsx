@@ -20,8 +20,7 @@ interface ImageGenerationTurn {
 }
 
 interface ChatTranscriptProps {
-  transcript: ChatMessage[]
-  pendingStreamMessages: ChatMessage[]
+  messages: ChatMessage[]
   streamState: ChatStreamState | null
   imageGeneration: ImageGenerationTurn | null
   loading: boolean
@@ -31,8 +30,7 @@ interface ChatTranscriptProps {
 }
 
 export function ChatTranscript({
-  transcript,
-  pendingStreamMessages,
+  messages,
   streamState,
   imageGeneration,
   loading,
@@ -40,10 +38,8 @@ export function ChatTranscript({
   onRetry,
   onRetryImage,
 }: ChatTranscriptProps) {
-  const empty = !transcript.length && !streamState && !imageGeneration
-  const streamingAssistantId = pendingStreamMessages.find(
-    (message) => message.role === 'assistant',
-  )?.id
+  const empty = !messages.length && !imageGeneration
+  const streamingAssistantId = streamState?.message.id
 
   return (
     <Conversation className="min-h-0 bg-background">
@@ -72,13 +68,18 @@ export function ChatTranscript({
           />
         ) : (
           <>
-            {transcript.map((message, index) => (
+            {messages.map((message, index) => (
               <ChatMessageItem
                 key={message.id}
                 message={message}
+                reasoning={
+                  message.id === streamingAssistantId
+                    ? streamState?.reasoning
+                    : undefined
+                }
                 userPrompt={
                   message.role === 'assistant'
-                    ? transcript
+                    ? messages
                       .slice(0, index)
                       .findLast((candidate) => candidate.role === 'user')
                       ?.content
@@ -97,23 +98,6 @@ export function ChatTranscript({
                 />
               </>
             ) : null}
-            {pendingStreamMessages.map((message) => (
-              <ChatMessageItem
-                key={message.id}
-                message={message}
-                reasoning={
-                  message.id === streamingAssistantId
-                    ? streamState?.reasoning
-                    : undefined
-                }
-                userPrompt={
-                  message.role === 'assistant'
-                    ? streamState?.user.content
-                    : undefined
-                }
-                onRetry={onRetry}
-              />
-            ))}
           </>
         )}
       </ConversationContent>

@@ -12,7 +12,7 @@ import { ChatComposer } from './components/ChatComposer'
 import { ChatConversationSidebar } from './components/ChatConversationSidebar'
 import { ChatHeader } from './components/ChatHeader'
 import { chatExportJSON, chatExportMarkdown, downloadChatExport } from './chatExport'
-import { failChatStream, pendingChatMessages, reduceChatStream, validateChatUploads, type ChatStreamState } from './chatLogic'
+import { failChatStream, pendingChatMessages, reconcileChatMessages, reduceChatStream, validateChatUploads, type ChatStreamState } from './chatLogic'
 
 interface PendingImageGeneration {
   prompt: string
@@ -68,6 +68,10 @@ export default function ChatPage() {
 
   const transcript = useMemo(() => messages.data?.data ?? [], [messages.data])
   const pendingStreamMessages = useMemo(() => pendingChatMessages(transcript, streamState), [transcript, streamState])
+  const renderedMessages = useMemo(
+    () => reconcileChatMessages(transcript, streamState),
+    [transcript, streamState],
+  )
   const activeConversation = conversations.data?.data.find((item) => item.id === activeId)
 
   useEffect(() => {
@@ -323,8 +327,7 @@ export default function ChatPage() {
         />
 
         <ChatTranscript
-          transcript={transcript}
-          pendingStreamMessages={pendingStreamMessages}
+          messages={renderedMessages}
           streamState={streamState}
           imageGeneration={imageGeneration}
           loading={messages.isLoading}

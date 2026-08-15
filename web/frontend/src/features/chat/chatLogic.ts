@@ -33,6 +33,26 @@ export function pendingChatMessages(transcript: ChatMessage[], state: ChatStream
   return [state.user, state.message].filter((message) => !ids.has(message.id))
 }
 
+export function reconcileChatMessages(
+  transcript: ChatMessage[],
+  state: ChatStreamState | null,
+) {
+  if (!state) return transcript
+
+  const turnIds = new Set([state.user.id, state.message.id])
+  const persisted = new Map(
+    transcript
+      .filter((message) => turnIds.has(message.id))
+      .map((message) => [message.id, message]),
+  )
+
+  return [
+    ...transcript.filter((message) => !turnIds.has(message.id)),
+    persisted.get(state.user.id) ?? state.user,
+    persisted.get(state.message.id) ?? state.message,
+  ]
+}
+
 export function failChatStream(state: ChatStreamState, stopped: boolean, message: string): ChatStreamState {
   return {
     ...state,

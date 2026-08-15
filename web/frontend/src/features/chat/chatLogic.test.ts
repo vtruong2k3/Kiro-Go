@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatMessage } from '@/types/chat'
-import { failChatStream, pendingChatMessages, reduceChatStream, validateChatUploads } from './chatLogic'
+import { failChatStream, pendingChatMessages, reconcileChatMessages, reduceChatStream, validateChatUploads } from './chatLogic'
 
 function file(name: string, type: string, size = 1) {
   return new File([new Uint8Array(size)], name, { type })
@@ -58,6 +58,25 @@ describe('chat stream state', () => {
     const state = reduceChatStream(initialState(), { event: 'generation.created', data: { generationId: 'g', userMessageId: 'user', assistantMessageId: 'assistant' } })
     expect(pendingChatMessages([{ ...state.user }], state).map((item) => item.id)).toEqual(['assistant'])
     expect(pendingChatMessages([{ ...state.user }, { ...state.message }], state)).toEqual([])
+  })
+
+  it('keeps the active user turn before its assistant while persistence catches up', () => {
+    const state = reduceChatStream(initialState(), { event: 'generation.created', data: { generationId: 'g', userMessageId: 'user', assistantMessageId: 'assistant' } })
+    const previous = { ...user, id: 'previous', content: 'previous turn' }
+
+    expect(reconcileChatMessages([previous, { ...state.message, content: 'reply' }], state))
+      .toEqual([previous, state.user, { ...state.message, content: 'reply' }])
+    expect(reconcileChatMessages([previous, state.user], state))
+      .toEqual([previous, state.user, state.message])
+  })
+
+  it('reconciles persisted turn records without duplicating them', () => {
+    const state = reduceChatStream(initialState(), { event: 'generation.created', data: { generationId: 'g', userMessageId: 'user', assistantMessageId: 'assistant' } })
+    const persistedUser = { ...state.user, content: 'persisted user' }
+    const persistedAssistant = { ...state.message, content: 'persisted assistant' }
+
+    expect(reconcileChatMessages([persistedAssistant, persistedUser], state))
+      .toEqual([persistedUser, persistedAssistant])
   })
 
   it('preserves stopped and interrupted terminal states', () => {
