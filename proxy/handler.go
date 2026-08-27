@@ -4438,10 +4438,16 @@ func (h *Handler) apiStartAntigravity(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
+	mode := "manual"
+	if session.ListenerBound {
+		mode = "automatic"
+	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"sessionId": session.ID,
-		"signInUrl": authURL,
-		"interval":  2,
+		"sessionId":    session.ID,
+		"signInUrl":    authURL,
+		"interval":     2,
+		"callbackMode": mode,
+		"callbackHint": "If localhost:3129 is unreachable, copy the complete callback URL from the browser address bar and paste it here.",
 	})
 }
 
@@ -4503,6 +4509,7 @@ func (h *Handler) apiPollAntigravity(w http.ResponseWriter, r *http.Request) {
 // copies here. No listener/session is involved; the code is exchanged directly.
 func (h *Handler) apiCompleteAntigravity(w http.ResponseWriter, r *http.Request) {
 	var req struct {
+		SessionID   string `json:"sessionId"`
 		CallbackURL string `json:"callbackUrl"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -4511,7 +4518,12 @@ func (h *Handler) apiCompleteAntigravity(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	result, err := auth.CompleteAntigravityManual(req.CallbackURL)
+	if req.SessionID == "" {
+		w.WriteHeader(400)
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": "sessionId is required"})
+		return
+	}
+	result, err := auth.CompleteAntigravityManual(req.SessionID, req.CallbackURL)
 	if err != nil {
 		w.WriteHeader(400)
 		json.NewEncoder(w).Encode(map[string]interface{}{

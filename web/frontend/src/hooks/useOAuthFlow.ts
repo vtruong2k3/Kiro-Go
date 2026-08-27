@@ -36,6 +36,8 @@ export interface OAuthFlowState {
   verificationUri: string
   account: FlowAccount | null
   error: string
+  callbackMode: 'automatic' | 'manual' | ''
+  callbackHint: string
 }
 
 const INITIAL: OAuthFlowState = {
@@ -45,6 +47,8 @@ const INITIAL: OAuthFlowState = {
   verificationUri: '',
   account: null,
   error: '',
+  callbackMode: '',
+  callbackHint: '',
 }
 
 export function useOAuthFlow<StartArgs = void>(config: OAuthFlowConfig<StartArgs>) {
@@ -53,6 +57,8 @@ export function useOAuthFlow<StartArgs = void>(config: OAuthFlowConfig<StartArgs
   const sessionRef = useRef<string>('')
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const stoppedRef = useRef(false)
+  const generationRef = useRef(0)
+  const retryRef = useRef(0)
 
   const stopPolling = useCallback(() => {
     if (timerRef.current) {
@@ -80,38 +86,59 @@ export function useOAuthFlow<StartArgs = void>(config: OAuthFlowConfig<StartArgs
   )
 
   const schedulePoll = useCallback(
-    (intervalMs: number) => {
+    (intervalMs: number, generation = generationRef.current) => {
       if (!config.poll) return
       stopPolling()
       timerRef.current = setTimeout(async () => {
-        if (stoppedRef.current) return
+        if (stoppedRef.current || generation !== generationRef.current) return
         const sid = sessionRef.current
         if (!sid) return
         try {
           const res = await config.poll!(sid)
-          if (stoppedRef.current) return
+          if (stoppedRef.current || generation !== generationRef.current) return
+          retryRef.current = 0
           if (res.completed) {
             finishSuccess(res.account ?? null)
             return
           }
           const nextMs = (res.interval ?? intervalMs / 1000) * 1000
-          setState((s) => ({ ...s, phase: 'polling' }))
-          schedulePoll(nextMs)
+          setState((s) => ({ ...s, phase: 'polling', error: '' }))
+          schedulePoll(nextMs, generation)
         } catch (err) {
-          if (stoppedRef.current) return
-          failWith(err instanceof ApiError ? err.message : String(err))
+          if (stoppedRef.current || generation !== generationRef.current) return
+          const apiErr = err instanceof ApiError ? err : null
+          // Network failures and 5xx responses are transient; authenticated
+          // session/OAuth errors remain terminal and are surfaced immediately.
+          if (!apiErr || apiErr.status === 0 || apiErr.status >= 500) {
+            const retry = Math.min(retryRef.current, 5)
+            retryRef.current += 1
+            const backoff = Math.min(15000, Math.max(intervalMs, 1000) * 2 ** retry)
+            setState((s) => ({ ...s, phase: 'polling', error: 'Connection interrupted; reconnecting…' }))
+            schedulePoll(backoff, generation)
+            return
+          }
+          failWith(apiErr.message)
         }
       }, intervalMs)
     },
     [config, finishSuccess, failWith, stopPolling],
   )
 
+  const openSignIn = useCallback((url: string) => {
+    if (!url) return
+    window.open(url, '_blank', 'noopener')
+  }, [])
+
   const start = useCallback(
-    async (args: StartArgs) => {
+    async (args: StartArgs, popup?: Window | null) => {
       stoppedRef.current = false
+      generationRef.current += 1
+      retryRef.current = 0
+      const generation = generationRef.current
       setState({ ...INITIAL, phase: 'starting' })
       try {
         const res = await config.start(args)
+        if (stoppedRef.current || generation !== generationRef.current) return
         sessionRef.current = res.sessionId
         const url = res.signInUrl ?? res.authorizeUrl ?? ''
         setState({
@@ -122,18 +149,23 @@ export function useOAuthFlow<StartArgs = void>(config: OAuthFlowConfig<StartArgs
           verificationUri: res.verificationUri ?? '',
           account: null,
           error: '',
+          callbackMode: res.callbackMode ?? '',
+          callbackHint: res.callbackHint ?? '',
         })
-        // Open the sign-in tab immediately (works when the admin panel is viewed
-        // on the proxy host). May be blocked by a popup blocker on a non-gesture
-        // start (grok/antigravity/codex auto-start) — the visible link is the
-        // fallback the operator clicks.
-        if (url) window.open(url, '_blank', 'noopener')
-        if (config.poll) schedulePoll((res.interval ?? 2) * 1000)
+        // Reuse a tab opened synchronously by the click handler. If no tab was
+        // opened (effect-driven providers or popup blockers), retain the link
+        // as the reliable fallback.
+        if (popup && !popup.closed) {
+          popup.location.href = url
+        } else {
+          openSignIn(url)
+        }
+        if (config.poll) schedulePoll((res.interval ?? 2) * 1000, generation)
       } catch (err) {
         failWith(err instanceof ApiError ? err.message : String(err))
       }
     },
-    [config, schedulePoll, failWith],
+    [config, schedulePoll, failWith, openSignIn],
   )
 
   const complete = useCallback(

@@ -61,8 +61,8 @@ const (
 	agRedirectURI  = "http://localhost:3129/callback"
 	agCallbackPath = "/callback"
 
-	agLoginTimeout   = 10 * time.Minute
-	agDefaultTierID  = "legacy-tier"
+	agLoginTimeout  = 10 * time.Minute
+	agDefaultTierID = "legacy-tier"
 )
 
 // Tunable for tests (onboard poll loop).
@@ -130,12 +130,17 @@ type AntigravitySession struct {
 	State     string
 	ProxyURL  string
 	ExpiresAt time.Time
+	// ListenerBound is true when the fixed loopback callback is reachable by the
+	// browser. Remote/domain deployments should use the manual callback field.
+	ListenerBound bool
 
-	srv       *http.Server
-	resultCh  chan antigravityCapture
-	once      sync.Once
-	closeOnce sync.Once
-	timer     *time.Timer
+	srv        *http.Server
+	resultCh   chan antigravityCapture
+	once       sync.Once
+	closeOnce  sync.Once
+	timer      *time.Timer
+	completeMu sync.Mutex
+	completing bool
 }
 
 // antigravityCapture is the raw outcome delivered by the loopback listener.
@@ -228,7 +233,17 @@ func StartAntigravityLogin() (*AntigravitySession, string, error) {
 	// port 3129 still held by an abandoned session) must not block sign-in.
 	if err := session.startListener(); err != nil {
 		logger.Warnf("[Antigravity] callback listener not bound (manual paste still works): %v", err)
+	} else {
+		session.ListenerBound = true
 	}
+	// Register the session before returning so both automatic callbacks and manual
+	// completion are tied to this exact OAuth state.
+	agSessionsMu.Lock()
+	agSessions[session.ID] = session
+	agSessionsMu.Unlock()
+
+	// The listener is best effort; a manual-only session remains valid when the
+	// fixed loopback port is unavailable or unreachable from the browser.
 
 	params := url.Values{}
 	params.Set("client_id", agClientID())
@@ -239,10 +254,6 @@ func StartAntigravityLogin() (*AntigravitySession, string, error) {
 	params.Set("access_type", "offline")
 	params.Set("prompt", "consent")
 	authURL := agAuthorizeURL + "?" + params.Encode()
-
-	agSessionsMu.Lock()
-	agSessions[session.ID] = session
-	agSessionsMu.Unlock()
 
 	session.timer = time.AfterFunc(agLoginTimeout, func() {
 		session.close()
@@ -265,6 +276,13 @@ func PollAntigravityAuth(sessionID string) (*AntigravityResult, string, error) {
 
 	select {
 	case capture := <-session.resultCh:
+		session.completeMu.Lock()
+		if session.completing {
+			session.completeMu.Unlock()
+			return nil, "", fmt.Errorf("Antigravity login is already being completed")
+		}
+		session.completing = true
+		session.completeMu.Unlock()
 		session.close()
 		removeAntigravitySession(sessionID)
 		if capture.err != nil {
@@ -282,52 +300,71 @@ func PollAntigravityAuth(sessionID string) (*AntigravityResult, string, error) {
 }
 
 // CompleteAntigravityManual finishes a sign-in from a pasted callback URL (or a
-// bare authorization code). This is the headless/domain-deployment path: the
-// OAuth redirect targets the fixed loopback localhost:3129, which a remote
-// operator's browser cannot reach, so the browser lands on an error page whose
-// address bar still carries ?code=... The operator pastes that URL (or just the
-// code) here and the code is exchanged + bootstrapped without any listener.
-//
-// No session/state check applies (there is no live session); anti-CSRF state is
-// irrelevant because the operator is copying a value from their own browser.
-func CompleteAntigravityManual(rawInput string) (*AntigravityResult, error) {
-	code := extractAntigravityCode(rawInput)
+// bare authorization code). It is bound to the active server-side session so the
+// OAuth state and one-time exchange cannot be replayed into another login.
+func CompleteAntigravityManual(sessionID, rawInput string) (*AntigravityResult, error) {
+	agSessionsMu.RLock()
+	session, ok := agSessions[sessionID]
+	agSessionsMu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("session not found or expired; start the Antigravity login again")
+	}
+	if time.Now().After(session.ExpiresAt) {
+		session.close()
+		removeAntigravitySession(sessionID)
+		return nil, fmt.Errorf("Antigravity login timed out after %s", agLoginTimeout)
+	}
+
+	code, callbackState := extractAntigravityCallback(rawInput)
 	if code == "" {
 		return nil, fmt.Errorf("no authorization code found in the pasted value")
 	}
+	if callbackState != "" && callbackState != session.State {
+		return nil, fmt.Errorf("the pasted callback URL did not match this sign-in")
+	}
 
-	s := &AntigravitySession{ProxyURL: config.GetProxyURL()}
-	result, _, err := s.bootstrap(code)
+	// Claim before bootstrap: concurrent poll/manual requests must not exchange
+	// the same authorization code or persist duplicate accounts.
+	session.completeMu.Lock()
+	if session.completing {
+		session.completeMu.Unlock()
+		return nil, fmt.Errorf("Antigravity login is already being completed")
+	}
+	session.completing = true
+	session.completeMu.Unlock()
+
+	result, _, err := session.bootstrap(code)
+	session.close()
+	removeAntigravitySession(sessionID)
 	if err != nil {
 		return nil, err
 	}
 	return result, nil
 }
 
-// extractAntigravityCode pulls the OAuth "code" out of a pasted value. It accepts
-// a full callback URL (http://localhost:3129/callback?code=...&state=...), a bare
-// "code=..." query fragment, or the raw code itself.
-func extractAntigravityCode(raw string) string {
+func extractAntigravityCallback(raw string) (string, string) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return ""
+		return "", ""
 	}
-	// Full URL or anything with a query string.
 	if u, err := url.Parse(raw); err == nil {
 		if c := strings.TrimSpace(u.Query().Get("code")); c != "" {
-			return c
+			return c, strings.TrimSpace(u.Query().Get("state"))
 		}
 	}
-	// A bare "code=...&..." fragment without a scheme.
 	if strings.Contains(raw, "code=") {
 		if q, err := url.ParseQuery(strings.TrimPrefix(raw, "?")); err == nil {
-			if c := strings.TrimSpace(q.Get("code")); c != "" {
-				return c
-			}
+			return strings.TrimSpace(q.Get("code")), strings.TrimSpace(q.Get("state"))
 		}
 	}
-	// Assume the operator pasted just the code.
-	return raw
+	return raw, ""
+}
+
+// extractAntigravityCode is retained for parsing tests and callers that only
+// need the authorization code.
+func extractAntigravityCode(raw string) string {
+	code, _ := extractAntigravityCallback(raw)
+	return code
 }
 
 // CancelAntigravityLogin tears an in-flight session down immediately.
@@ -965,6 +1002,9 @@ func (s *AntigravitySession) handleCallback(w http.ResponseWriter, req *http.Req
 
 func writeAntigravityCallbackPage(w http.ResponseWriter, ok bool) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(http.StatusOK)
 	msg := "Antigravity sign-in complete. You can close this tab and return to the admin panel."
 	if !ok {

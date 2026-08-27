@@ -54,6 +54,12 @@ export function OAuthFlowView({ flow, allowManual, onDone }: Props) {
         </div>
       )}
 
+      {state.callbackHint && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300">
+          {state.callbackHint}
+        </div>
+      )}
+
       {state.signInUrl && (
         <div className="space-y-2">
           <Label>{t('iam.loginUrl')}</Label>
@@ -93,8 +99,12 @@ export function OAuthFlowView({ flow, allowManual, onDone }: Props) {
               placeholder="http://127.0.0.1:.../?code=..."
             />
             <Button
-              onClick={() => onComplete(callback)}
-              disabled={!callback.trim()}
+              onClick={() => {
+                const value = callback.trim()
+                setCallback('')
+                void onComplete(value)
+              }}
+              disabled={!callback.trim() || state.phase === 'polling'}
             >
               {t('iam.complete')}
             </Button>

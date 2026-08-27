@@ -1,5 +1,4 @@
 // Antigravity OAuth — loopback poll + manual-paste fallback. No args to start.
-import { useEffect, useRef } from 'react'
 import { useOAuthFlow } from '@/hooks/useOAuthFlow'
 import {
   startAntigravity,
@@ -7,6 +6,7 @@ import {
   completeAntigravity,
   cancelAntigravity,
 } from '@/services/authFlows.service'
+import { Button } from '@/components/ui/button'
 import { OAuthFlowView } from '../OAuthFlowView'
 import type { FlowComponentProps } from './types'
 
@@ -18,16 +18,27 @@ export function AntigravityFlow({ onDone }: FlowComponentProps) {
     cancel: cancelAntigravity,
   })
 
-  // Guard against StrictMode's double-invoked effect: starting twice would open
-  // two tabs and mint two PKCE verifiers, so the code from one session gets
-  // exchanged against the other's verifier → PKCE mismatch.
-  const started = useRef(false)
-  useEffect(() => {
-    if (started.current) return
-    started.current = true
-    void flow.start()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  if (flow.state.phase === 'idle') {
+    return (
+      <div className="space-y-3">
+        <p className="text-sm text-muted-foreground">
+          Open Google sign-in to connect your Antigravity account. If the callback
+          cannot reach this server, the dialog will provide a manual fallback.
+        </p>
+        <Button
+          className="w-full"
+          onClick={() => {
+            // Open synchronously from the user gesture so popup blockers do not
+            // reject the tab while the server creates the OAuth session.
+            const popup = window.open('', '_blank')
+            void flow.start(undefined, popup)
+          }}
+        >
+          Start Antigravity login
+        </Button>
+      </div>
+    )
+  }
 
   return <OAuthFlowView flow={flow} onDone={onDone} allowManual />
 }

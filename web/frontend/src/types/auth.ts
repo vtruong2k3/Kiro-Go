@@ -29,6 +29,8 @@ export interface StartResponse {
   userCode?: string
   interval?: number
   expiresIn?: number
+  callbackMode?: 'automatic' | 'manual'
+  callbackHint?: string
 }
 
 export type PollStatus = 'pending' | 'slow_down' | 'redirect'

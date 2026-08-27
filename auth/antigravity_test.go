@@ -50,6 +50,41 @@ func TestNormalizeAntigravityProjectID(t *testing.T) {
 	}
 }
 
+func TestExtractAntigravityCallback(t *testing.T) {
+	cases := []struct {
+		name, input, code, state string
+	}{
+		{"url", "http://localhost:3129/callback?code=abc&state=st", "abc", "st"},
+		{"query", "?code=abc&state=st", "abc", "st"},
+		{"raw", "abc", "abc", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			code, state := extractAntigravityCallback(tc.input)
+			if code != tc.code || state != tc.state {
+				t.Fatalf("got (%q, %q), want (%q, %q)", code, state, tc.code, tc.state)
+			}
+		})
+	}
+}
+
+func TestAntigravityCallbackPageNoStore(t *testing.T) {
+	rr := httptest.NewRecorder()
+	writeAntigravityCallbackPage(rr, true)
+	if rr.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal("callback page must not be cached")
+	}
+	if rr.Header().Get("Content-Security-Policy") == "" {
+		t.Fatal("callback page must have CSP")
+	}
+}
+
+func TestManualAntigravityRequiresSession(t *testing.T) {
+	if _, err := CompleteAntigravityManual("missing", "code"); err == nil {
+		t.Fatal("expected unknown session to be rejected")
+	}
+}
+
 // cloudCodeMock serves loadCodeAssist + onboardUser for bootstrap chain tests.
 type cloudCodeMock struct {
 	loadBody    string
