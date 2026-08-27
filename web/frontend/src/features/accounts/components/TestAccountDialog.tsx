@@ -12,14 +12,8 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
+import { AccountModelPicker } from '@/components/shared/AccountModelPicker'
 import { Label } from '@/components/ui/label'
 import { HamsterWheel } from '@/components/shared/HamsterLoader'
 import { tp } from '@/lib/t'
@@ -84,22 +78,13 @@ export function TestAccountDialog({ account, onClose }: Props) {
         <div className="space-y-4">
           <div className="space-y-2">
             <Label>{t('accounts.selectModel')}</Label>
-            <Select value={model} onValueChange={setModel}>
-              <SelectTrigger>
-                <SelectValue
-                  placeholder={
-                    models.isPending ? t('accounts.testModelsLoading') : t('accounts.selectModel')
-                  }
-                />
-              </SelectTrigger>
-              <SelectContent>
-                {modelList.map((m) => (
-                  <SelectItem key={m.modelId} value={m.modelId}>
-                    {m.modelName || m.modelId}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <AccountModelPicker
+              models={modelList}
+              value={model}
+              onChange={setModel}
+              isLoading={models.isPending}
+              disabled={running}
+            />
           </div>
 
           {log.length > 0 && (
