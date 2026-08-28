@@ -478,6 +478,21 @@ func parseGrokOpenAIResponse(body io.Reader, callback *KiroStreamCallback, model
 		callback.OnFinishReason(resp.Choices[0].FinishReason)
 	}
 
+	if content == "" && reasoning == "" && len(resp.Choices) == 0 {
+		err := fmt.Errorf("grok: empty response (model=%s)", model)
+		if callback.OnError != nil {
+			callback.OnError(err)
+		}
+		return err
+	}
+	if content == "" && reasoning == "" && len(resp.Choices) > 0 && len(resp.Choices[0].Message.ToolCalls) == 0 {
+		err := fmt.Errorf("grok: empty response (model=%s)", model)
+		if callback.OnError != nil {
+			callback.OnError(err)
+		}
+		return err
+	}
+
 	if callback.OnComplete != nil {
 		// Report upstream usage verbatim. Non-stream responses always carry a usage
 		// block, so a zero here means xAI really reported zero — do not substitute

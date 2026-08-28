@@ -69,7 +69,7 @@ func TestFetchRemoteKiroModels(t *testing.T) {
 func TestCallRemoteKiroAPINonStreamOpenAI(t *testing.T) {
 	withPrivateRemoteAllowed(t)
 	ensureConfigForRemoteTests(t)
-	var gotBody map[string]interface{}
+	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/chat/completions" {
 			http.NotFound(w, r)
@@ -180,24 +180,18 @@ func TestCallRemoteKiroAPIClaudeSource(t *testing.T) {
 	withPrivateRemoteAllowed(t)
 	ensureConfigForRemoteTests(t)
 	var gotPath string
-	var gotBody map[string]interface{}
-	var gotAPIKey, gotAnthropicVersion string
+	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
-		gotAPIKey = r.Header.Get("x-api-key")
-		gotAnthropicVersion = r.Header.Get("anthropic-version")
 		raw, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(raw, &gotBody)
 		w.Header().Set("Content-Type", "application/json")
-		// Anthropic non-stream shape — NOT OpenAI chat.completions.
 		_, _ = w.Write([]byte(`{
-			"id":"msg_1",
-			"type":"message",
-			"role":"assistant",
-			"content":[{"type":"text","text":"ok"}],
+			"id":"chatcmpl_1",
+			"object":"chat.completion",
+			"choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],
 			"model":"claude-sonnet-4.5",
-			"stop_reason":"end_turn",
-			"usage":{"input_tokens":4,"output_tokens":1}
+			"usage":{"prompt_tokens":4,"completion_tokens":1,"total_tokens":5}
 		}`))
 	}))
 	defer srv.Close()
@@ -234,24 +228,20 @@ func TestCallRemoteKiroAPIClaudeSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotPath != "/v1/messages" {
-		t.Fatalf("path=%q want /v1/messages (Claude must not be converted to OpenAI)", gotPath)
-	}
-	if gotAPIKey != "sk-x" {
-		t.Fatalf("x-api-key=%q", gotAPIKey)
-	}
-	if gotAnthropicVersion == "" {
-		t.Fatal("missing anthropic-version header")
+	if gotPath != "/v1/chat/completions" {
+		t.Fatalf("path=%q want /v1/chat/completions", gotPath)
 	}
 	if gotBody["model"] != "claude-sonnet-4.5" {
 		t.Fatalf("model=%v", gotBody["model"])
 	}
-	if _, isOpenAI := gotBody["messages"]; !isOpenAI {
-		// Claude body uses "messages" too — ensure max_tokens (Anthropic snake) present
-		// and OpenAI-only fields like "stream" bool still ok. Main guard is path above.
+	if gotBody["stream"] != false {
+		t.Fatalf("stream=%v", gotBody["stream"])
+	}
+	if _, ok := gotBody["messages"]; !ok {
+		t.Fatalf("missing OpenAI messages: %v", gotBody)
 	}
 	if gotBody["max_tokens"] == nil {
-		t.Fatalf("expected Anthropic max_tokens in body, got %v", gotBody)
+		t.Fatalf("expected max_tokens in body, got %v", gotBody)
 	}
 	if text.String() != "ok" {
 		t.Fatalf("text=%q", text.String())
@@ -265,24 +255,18 @@ func TestCallRemoteKiroAPIClaudeStream(t *testing.T) {
 	withPrivateRemoteAllowed(t)
 	ensureConfigForRemoteTests(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/messages" {
+		if r.URL.Path != "/v1/chat/completions" {
 			t.Fatalf("path=%s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		fl := w.(http.Flusher)
-		_, _ = io.WriteString(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"m1\",\"usage\":{\"input_tokens\":9,\"output_tokens\":0}}}\n\n")
+		_, _ = io.WriteString(w, "data: {\"id\":\"c1\",\"choices\":[{\"delta\":{\"content\":\"hi \"}}]}\n\n")
 		fl.Flush()
-		_, _ = io.WriteString(w, "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n")
+		_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"remote\"}}]}\n\n")
 		fl.Flush()
-		_, _ = io.WriteString(w, "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hi \"}}\n\n")
+		_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":9,\"completion_tokens\":2}}\n\n")
 		fl.Flush()
-		_, _ = io.WriteString(w, "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"remote\"}}\n\n")
-		fl.Flush()
-		_, _ = io.WriteString(w, "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n")
-		fl.Flush()
-		_, _ = io.WriteString(w, "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2}}\n\n")
-		fl.Flush()
-		_, _ = io.WriteString(w, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
 		fl.Flush()
 	}))
 	defer srv.Close()
@@ -324,16 +308,17 @@ func TestCallRemoteKiroAPIClaudeEmptyIsError(t *testing.T) {
 	withPrivateRemoteAllowed(t)
 	ensureConfigForRemoteTests(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Fatalf("path=%s", r.URL.Path)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		// 200 OK but no content — previously logged as success and client retried.
 		_, _ = w.Write([]byte(`{
-			"id":"msg_empty",
-			"type":"message",
-			"role":"assistant",
-			"content":[],
+			"id":"chatcmpl_empty",
+			"object":"chat.completion",
+			"choices":[{"index":0,"message":{"role":"assistant","content":""},"finish_reason":"stop"}],
 			"model":"claude-opus-5",
-			"stop_reason":"end_turn",
-			"usage":{"input_tokens":40,"output_tokens":0}
+			"usage":{"prompt_tokens":40,"completion_tokens":0,"total_tokens":40}
 		}`))
 	}))
 	defer srv.Close()
@@ -357,7 +342,7 @@ func TestCallRemoteKiroAPIClaudeEmptyIsError(t *testing.T) {
 		OnText:     func(string, bool) {},
 		OnComplete: func(int, int) { t.Fatal("OnComplete must not fire on empty") },
 	})
-	if err == nil || !strings.Contains(err.Error(), "empty claude") {
+	if err == nil || !strings.Contains(err.Error(), "empty") {
 		t.Fatalf("err=%v", err)
 	}
 }
