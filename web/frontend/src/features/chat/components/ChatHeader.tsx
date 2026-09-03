@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Bot, Check, FileJson, FileText, ImagePlus, Menu, Pencil } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import {
   ModelSelector,
   ModelSelectorContent,
@@ -46,6 +47,7 @@ export function ChatHeader({
   onImageSizeChange,
   onImageQualityChange,
 }: ChatHeaderProps) {
+  const { t } = useTranslation()
   const [modelSelectorOpen, setModelSelectorOpen] = useState(false)
   const availableModels = models.filter(
     (model) => !imageMode || model.capabilities.imageGeneration,
@@ -62,7 +64,7 @@ export function ChatHeader({
           size="icon-sm"
           className="md:hidden"
           onClick={onOpenSidebar}
-          aria-label="Open conversations"
+          aria-label={t('chat.header.openConversations')}
         >
           <Menu />
         </Button>
@@ -72,7 +74,7 @@ export function ChatHeader({
         <div className="min-w-0">
           <div className="flex items-center gap-1">
             <span className="truncate text-sm font-semibold">
-              {conversation?.title || 'AI Chat'}
+              {conversation?.title || t('chat.header.title')}
             </span>
             {conversation ? (
               <Button
@@ -80,14 +82,14 @@ export function ChatHeader({
                 variant="ghost"
                 size="icon-xs"
                 onClick={onRename}
-                aria-label="Rename conversation"
+                aria-label={t('chat.header.rename')}
               >
                 <Pencil />
               </Button>
             ) : null}
           </div>
           <span className="hidden truncate text-[11px] text-muted-foreground sm:block">
-            {imageMode ? 'Image studio' : 'Streaming through the internal provider pipeline'}
+            {imageMode ? t('chat.header.subtitleImage') : t('chat.header.subtitleChat')}
           </span>
         </div>
       </div>
@@ -95,10 +97,10 @@ export function ChatHeader({
       <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-1.5">
         {conversation ? (
           <div className="hidden items-center sm:flex">
-            <Button type="button" variant="ghost" size="icon-sm" onClick={() => onExport('markdown')} aria-label="Export Markdown">
+            <Button type="button" variant="ghost" size="icon-sm" onClick={() => onExport('markdown')} aria-label={t('chat.header.exportMarkdown')}>
               <FileText />
             </Button>
-            <Button type="button" variant="ghost" size="icon-sm" onClick={() => onExport('json')} aria-label="Export JSON">
+            <Button type="button" variant="ghost" size="icon-sm" onClick={() => onExport('json')} aria-label={t('chat.header.exportJson')}>
               <FileJson />
             </Button>
           </div>
@@ -110,26 +112,26 @@ export function ChatHeader({
           onClick={onToggleImageMode}
         >
           <ImagePlus />
-          <span className="hidden lg:inline">{imageMode ? 'Create image' : 'Chat'}</span>
+          <span className="hidden lg:inline">{imageMode ? t('chat.header.createImage') : t('chat.header.chatMode')}</span>
         </Button>
         {imageMode ? (
           <div className="order-last flex basis-full items-center gap-1 sm:order-none sm:basis-auto">
             <Select value={imageSize} onValueChange={onImageSizeChange}>
               <SelectTrigger className="min-w-0 flex-1 sm:w-28 sm:flex-none"><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="auto">Auto size</SelectItem>
-                <SelectItem value="1024x1024">Square</SelectItem>
-                <SelectItem value="1536x1024">Landscape</SelectItem>
-                <SelectItem value="1024x1536">Portrait</SelectItem>
+                <SelectItem value="auto">{t('chat.header.sizeAuto')}</SelectItem>
+                <SelectItem value="1024x1024">{t('chat.header.sizeSquare')}</SelectItem>
+                <SelectItem value="1536x1024">{t('chat.header.sizeLandscape')}</SelectItem>
+                <SelectItem value="1024x1536">{t('chat.header.sizePortrait')}</SelectItem>
               </SelectContent>
             </Select>
             <Select value={imageQuality} onValueChange={onImageQualityChange}>
               <SelectTrigger className="min-w-0 flex-1 sm:w-28 sm:flex-none"><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="auto">Auto quality</SelectItem>
-                <SelectItem value="low">Low</SelectItem>
-                <SelectItem value="medium">Medium</SelectItem>
-                <SelectItem value="high">High</SelectItem>
+                <SelectItem value="auto">{t('chat.header.qualityAuto')}</SelectItem>
+                <SelectItem value="low">{t('chat.header.qualityLow')}</SelectItem>
+                <SelectItem value="medium">{t('chat.header.qualityMedium')}</SelectItem>
+                <SelectItem value="high">{t('chat.header.qualityHigh')}</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -139,20 +141,20 @@ export function ChatHeader({
             <Button
               variant="outline"
               className="min-w-0 max-w-56 justify-start sm:w-56"
-              aria-label="Select provider and model"
+              aria-label={t('chat.header.selectProviderModel')}
             >
               <span className="size-2 shrink-0 rounded-full bg-primary shadow-[0_0_10px_var(--glow)]" />
               <span className="truncate">
                 {currentModel
                   ? `${currentModel.provider} · ${currentModel.displayName}`
-                  : 'Select model'}
+                  : t('chat.header.selectModel')}
               </span>
             </Button>
           </ModelSelectorTrigger>
-          <ModelSelectorContent className="sm:max-w-xl" title="Choose provider and model">
-            <ModelSelectorInput placeholder="Search providers and models…" />
+          <ModelSelectorContent className="sm:max-w-xl" title={t('chat.header.chooseProviderModel')}>
+            <ModelSelectorInput placeholder={t('chat.header.searchProvidersModels')} />
             <ModelSelectorList>
-              <ModelSelectorEmpty>No matching model.</ModelSelectorEmpty>
+              <ModelSelectorEmpty>{t('chat.header.noMatchingModel')}</ModelSelectorEmpty>
               {providers.map((provider) => (
                 <ModelSelectorGroup key={provider} heading={provider}>
                   {availableModels

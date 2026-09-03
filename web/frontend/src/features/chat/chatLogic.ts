@@ -128,7 +128,7 @@ export function failChatStream(state: ChatStreamState, stopped: boolean, message
       ...state.message,
       status: stopped ? 'stopped' : 'error',
       errorCode: stopped ? 'generation_cancelled' : 'stream_interrupted',
-      errorMessage: stopped ? 'Generation stopped' : message,
+      errorMessage: message,
     },
   }
 }

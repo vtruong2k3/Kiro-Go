@@ -2,7 +2,9 @@
 
 import '@testing-library/jest-dom/vitest'
 import { cleanup, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it } from 'vitest'
+import en from '@/../locales/en.json'
+import i18n from '@/lib/i18n'
 import type { ChatMessage } from '@/types/chat'
 import { ChatMessageItem } from './ChatMessageItem'
 
@@ -27,6 +29,10 @@ const assistant: ChatMessage = {
   updatedAt: 1,
 }
 
+beforeAll(async () => {
+  await i18n.changeLanguage('en')
+})
+
 afterEach(cleanup)
 
 describe('ChatMessageItem', () => {
@@ -34,8 +40,8 @@ describe('ChatMessageItem', () => {
     render(<ChatMessageItem message={assistant} />)
 
     expect(screen.getByRole('status', {
-      name: 'Assistant is generating a response',
-    })).toHaveTextContent('Generating response')
+      name: en['chat.message.generatingAriaLabel'],
+    })).toHaveTextContent(en['chat.message.generatingText'])
   })
 
   it('replaces the loading status when response content arrives', () => {
@@ -49,10 +55,10 @@ describe('ChatMessageItem', () => {
     render(<ChatMessageItem message={{
       ...assistant,
       status: 'error',
-      errorMessage: 'Generation failed',
+      errorMessage: en['chat.message.failed'],
     }} />)
 
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
-    expect(screen.getByText('Generation failed')).toBeInTheDocument()
+    expect(screen.getByText(en['chat.message.failed'])).toBeInTheDocument()
   })
 })

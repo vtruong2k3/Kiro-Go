@@ -1,4 +1,5 @@
 import { Bot } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import {
   Conversation,
   ConversationContent,
@@ -38,6 +39,7 @@ export function ChatTranscript({
   onRetry,
   onRetryImage,
 }: ChatTranscriptProps) {
+  const { t } = useTranslation()
   const empty = !messages.length && !imageGeneration
   const streamingAssistantId = streamState?.message.id
 
@@ -47,14 +49,14 @@ export function ChatTranscript({
         {loading && empty ? (
           <ConversationEmptyState
             icon={<Bot className="size-9 animate-pulse" />}
-            title="Loading conversation"
-            description="Retrieving messages from your chat history."
+            title={t('chat.transcript.loadingTitle')}
+            description={t('chat.transcript.loadingDescription')}
           />
         ) : error ? (
           <ConversationEmptyState
             icon={<Bot className="size-9" />}
-            title="Messages could not be loaded"
-            description="Refresh the page or choose another conversation."
+            title={t('chat.transcript.errorTitle')}
+            description={t('chat.transcript.errorDescription')}
           />
         ) : empty ? (
           <ConversationEmptyState
@@ -63,8 +65,8 @@ export function ChatTranscript({
                 <Bot className="size-7" />
               </div>
             )}
-            title="Start a new signal"
-            description="Choose a provider and model, then ask a question or create an image."
+            title={t('chat.transcript.emptyTitle')}
+            description={t('chat.transcript.emptyDescription')}
           />
         ) : (
           <>

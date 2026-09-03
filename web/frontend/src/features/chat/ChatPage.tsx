@@ -7,6 +7,7 @@ import { qk } from '@/config/queryKeys'
 import type { ChatMessage, ChatStreamEvent } from '@/types/chat'
 import { Sheet, SheetContent } from '@/components/ui/sheet'
 import { useConfirm } from '@/components/shared/ConfirmDialog'
+import { t } from '@/lib/t'
 import { ChatTranscript } from './components/ChatTranscript'
 import { ChatComposer } from './components/ChatComposer'
 import { ChatConversationSidebar } from './components/ChatConversationSidebar'
@@ -88,7 +89,7 @@ export default function ChatPage() {
 
   async function renameConversation() {
     if (!activeConversation) return
-    const title = window.prompt('Conversation title', activeConversation.title)
+    const title = window.prompt(t('chat.page.renamePromptTitle'), activeConversation.title)
     if (title === null || !title.trim() || title.trim() === activeConversation.title) return
     await chatService.updateConversation(activeConversation.id, { title: title.trim() })
     await queryClient.invalidateQueries({ queryKey: qk.chatConversations })
@@ -106,7 +107,7 @@ export default function ChatPage() {
 
   async function createConversation() {
     const model = models.data?.find((item) => item.id === selectedModel) ?? models.data?.[0]
-    if (!model) return toast.error('No chat model is available')
+    if (!model) return toast.error(t('chat.page.noChatModel'))
     const created = await chatService.createConversation({ provider: model.provider, model: model.model })
     await queryClient.invalidateQueries({ queryKey: qk.chatConversations })
     setActiveId(created.id)
@@ -114,7 +115,12 @@ export default function ChatPage() {
   }
 
   async function removeConversation(id: string) {
-    const accepted = await confirm({ title: 'Delete conversation?', description: 'Messages and stored images will be permanently deleted.', confirmLabel: 'Delete', destructive: true })
+    const accepted = await confirm({
+      title: t('chat.page.deleteTitle'),
+      description: t('chat.page.deleteDescription'),
+      confirmLabel: t('common.delete'),
+      destructive: true,
+    })
     if (!accepted) return
     await chatService.deleteConversation(id)
     if (activeId === id) setActiveId('')
@@ -124,13 +130,13 @@ export default function ChatPage() {
   function addImages(files: File[]) {
     const model = models.data?.find((item) => item.id === selectedModel)
     if (model && !model.capabilities.vision) {
-      toast.error('The selected model does not support image input')
+      toast.error(t('chat.page.noImageInput'))
       return
     }
     setPendingImages((current) => {
       const result = validateChatUploads(current, files)
-      if (result.rejected === 'too_many') toast.error('You can attach at most four images')
-      if (result.rejected === 'invalid_image') toast.error('Use non-empty PNG, JPEG, or WebP images up to 10 MiB')
+      if (result.rejected === 'too_many') toast.error(t('chat.page.maxImages'))
+      if (result.rejected === 'invalid_image') toast.error(t('chat.page.invalidImages'))
       return result.rejected ? current : result.accepted
     })
   }
@@ -141,12 +147,12 @@ export default function ChatPage() {
     if ((!content && !imageFiles.length) || controller.current) return
 
     const model = models.data?.find((item) => item.id === selectedModel)
-    if (imageMode && !model) return toast.error('Select an image generation model first')
+    if (imageMode && !model) return toast.error(t('chat.page.selectImageModel'))
     if (imageFiles.length && model && !model.capabilities.vision) {
-      toast.error('The selected model does not support image input')
+      toast.error(t('chat.page.noImageInput'))
       return
     }
-    if (!activeId && !model) return toast.error('Select a model first')
+    if (!activeId && !model) return toast.error(t('chat.page.selectModelFirst'))
 
     const abort = new AbortController()
     controller.current = abort
@@ -191,7 +197,7 @@ export default function ChatPage() {
 
     try {
       if (!conversationId) {
-        if (!model) throw new Error('Select a model first')
+        if (!model) throw new Error(t('chat.page.selectModelFirst'))
         const created = await chatService.createConversation({
           provider: model.provider,
           model: model.model,
@@ -216,10 +222,10 @@ export default function ChatPage() {
         })
       }
 
-      if (abort.signal.aborted) throw new DOMException('Generation stopped', 'AbortError')
+      if (abort.signal.aborted) throw new DOMException(t('chat.page.generationStopped'), 'AbortError')
 
       if (imageMode) {
-        if (!model) throw new Error('Select an image generation model first')
+        if (!model) throw new Error(t('chat.page.selectImageModel'))
         generationStarted = true
         const result = await chatService.generateImage(conversationId, {
           clientRequestId: requestId(),
@@ -245,7 +251,7 @@ export default function ChatPage() {
         const uploaded = await chatService.uploadAttachments(conversationId, imageFiles)
         attachmentIds = uploaded.map((attachment) => attachment.id)
       }
-      if (abort.signal.aborted) throw new DOMException('Generation stopped', 'AbortError')
+      if (abort.signal.aborted) throw new DOMException(t('chat.page.generationStopped'), 'AbortError')
 
       setUploading(false)
       generationStarted = true
@@ -259,7 +265,7 @@ export default function ChatPage() {
       )
     } catch (error) {
       const stopped = abort.signal.aborted
-      const message = error instanceof Error ? error.message : 'Generation failed'
+      const message = error instanceof Error ? error.message : t('chat.page.generationFailed')
       if (imageMode) {
         setImageGeneration((current) => current ? {
           ...current,
@@ -267,7 +273,7 @@ export default function ChatPage() {
             ...current.assistant,
             status: stopped ? 'stopped' : 'error',
             errorCode: stopped ? 'generation_cancelled' : 'image_generation_failed',
-            errorMessage: stopped ? 'Image generation stopped' : message,
+            errorMessage: stopped ? t('chat.page.imageGenerationStopped') : message,
           },
         } : current)
       } else {
@@ -355,7 +361,7 @@ export default function ChatPage() {
             if (next) {
               const imageModel = models.data?.find((item) => item.capabilities.imageGeneration)
               if (imageModel) setSelectedModel(imageModel.id)
-              else toast.error('No image generation model is available')
+              else toast.error(t('chat.page.noImageGenModel'))
             }
           }}
           onModelChange={setSelectedModel}

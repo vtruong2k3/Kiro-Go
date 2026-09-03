@@ -105,7 +105,7 @@ describe('chat stream state', () => {
   })
 
   it('preserves stopped and interrupted terminal states', () => {
-    expect(failChatStream(initialState(), true, 'ignored').message).toMatchObject({ status: 'stopped', errorCode: 'generation_cancelled' })
+    expect(failChatStream(initialState(), true, 'ignored').message).toMatchObject({ status: 'stopped', errorCode: 'generation_cancelled', errorMessage: 'ignored' })
     expect(failChatStream(initialState(), false, 'Disconnected').message).toMatchObject({ status: 'error', errorCode: 'stream_interrupted', errorMessage: 'Disconnected' })
   })
 })

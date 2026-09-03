@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ImagePlus, Sparkles } from 'lucide-react'
 import type { ChatStatus } from 'ai'
+import { useTranslation } from 'react-i18next'
 import {
   Attachment,
   AttachmentPreview,
@@ -18,6 +19,7 @@ import {
   PromptInputTextarea,
   PromptInputTools,
 } from '@/components/ai-elements/prompt-input'
+import { tp } from '@/lib/t'
 import type { ChatModel } from '@/types/chat'
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024
@@ -46,6 +48,7 @@ function PendingAttachment({
   onRemove: (index: number) => void
 }) {
   const [url, setURL] = useState('')
+  const { t } = useTranslation()
 
   useEffect(() => {
     const objectURL = URL.createObjectURL(file)
@@ -64,7 +67,7 @@ function PendingAttachment({
   return (
     <Attachment data={data} onRemove={() => onRemove(index)}>
       <AttachmentPreview />
-      <AttachmentRemove label={`Remove ${file.name}`} />
+      <AttachmentRemove label={tp(t, 'chat.composer.removeImage', file.name)} />
     </Attachment>
   )
 }
@@ -82,6 +85,7 @@ export function ChatComposer({
   onSubmit,
   onStop,
 }: ChatComposerProps) {
+  const { t } = useTranslation()
   const status: ChatStatus = busy
     ? uploading
       ? 'submitted'
@@ -125,7 +129,7 @@ export function ChatComposer({
           <PromptInputTextarea
             className="min-h-20 px-4 pt-4 text-[15px]"
             placeholder={
-              imageMode ? 'Describe the image to create…' : 'Message AI…'
+              imageMode ? t('chat.composer.placeholderImage') : t('chat.composer.placeholderChat')
             }
             value={draft}
             disabled={busy}
@@ -144,7 +148,7 @@ export function ChatComposer({
           <PromptInputTools>
             {!imageMode ? (
               <PromptInputButton
-                tooltip="Attach images"
+                tooltip={t('chat.composer.attachImages')}
                 disabled={attachmentsDisabled}
                 onClick={() => {
                   const input = document.querySelector<HTMLInputElement>(
@@ -157,11 +161,11 @@ export function ChatComposer({
               </PromptInputButton>
             ) : (
               <div className="flex items-center gap-1.5 rounded-lg bg-primary/10 px-2.5 py-1.5 text-xs font-medium text-primary">
-                <Sparkles className="size-3.5" /> Image generation
+                <Sparkles className="size-3.5" /> {t('chat.composer.imageGeneration')}
               </div>
             )}
             <span className="hidden truncate text-xs text-muted-foreground sm:inline">
-              {selectedModel ? `${selectedModel.provider} · ${selectedModel.displayName}` : 'Select a model'}
+              {selectedModel ? `${selectedModel.provider} · ${selectedModel.displayName}` : t('chat.composer.selectModel')}
             </span>
           </PromptInputTools>
           <PromptInputSubmit

@@ -1,6 +1,8 @@
 import { Archive, MessageSquarePlus, Pin, PinOff, RotateCcw, Search, Trash2 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { tp } from '@/lib/t'
 import type { ChatConversation } from '@/types/chat'
 
 interface ChatConversationSidebarProps {
@@ -34,11 +36,12 @@ export function ChatConversationSidebar({
   onToggleArchive,
   onDelete,
 }: ChatConversationSidebarProps) {
+  const { t } = useTranslation()
   return (
     <aside className={`flex min-h-0 flex-col bg-sidebar text-sidebar-foreground ${className ?? ''}`}>
       <div className="space-y-3 border-b border-sidebar-border p-3">
         <Button className="h-9 w-full justify-start shadow-sm" onClick={onCreate}>
-          <MessageSquarePlus /> New chat
+          <MessageSquarePlus /> {t('chat.sidebar.newChat')}
         </Button>
         <div className="grid grid-cols-2 rounded-lg bg-muted/60 p-1">
           <Button
@@ -46,21 +49,21 @@ export function ChatConversationSidebar({
             variant={status === 'active' ? 'secondary' : 'ghost'}
             onClick={() => onStatusChange('active')}
           >
-            Active
+            {t('chat.sidebar.tabActive')}
           </Button>
           <Button
             size="sm"
             variant={status === 'archived' ? 'secondary' : 'ghost'}
             onClick={() => onStatusChange('archived')}
           >
-            Archived
+            {t('chat.sidebar.tabArchived')}
           </Button>
         </div>
         <div className="relative">
           <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             className="h-9 bg-background pl-8"
-            placeholder="Search chats…"
+            placeholder={t('chat.sidebar.searchPlaceholder')}
             value={search}
             onChange={(event) => onSearchChange(event.target.value)}
           />
@@ -68,10 +71,14 @@ export function ChatConversationSidebar({
       </div>
       <div className="min-h-0 flex-1 space-y-1 overflow-y-auto p-2">
         {loading ? (
-          <p className="px-3 py-6 text-center text-xs text-muted-foreground">Loading conversations…</p>
+          <p className="px-3 py-6 text-center text-xs text-muted-foreground">{t('chat.sidebar.loading')}</p>
         ) : conversations.length === 0 ? (
           <p className="px-3 py-6 text-center text-xs text-muted-foreground">
-            {search ? 'No matching conversations.' : `No ${status} conversations.`}
+            {search
+              ? t('chat.sidebar.noMatch')
+              : tp(t, 'chat.sidebar.noConversations', t(
+                status === 'active' ? 'chat.sidebar.statusActive' : 'chat.sidebar.statusArchived',
+              ))}
           </p>
         ) : conversations.map((conversation) => (
           <div
@@ -100,7 +107,7 @@ export function ChatConversationSidebar({
               <Button
                 variant="ghost"
                 size="icon-xs"
-                aria-label={conversation.pinned ? 'Unpin conversation' : 'Pin conversation'}
+                aria-label={conversation.pinned ? t('chat.sidebar.unpin') : t('chat.sidebar.pin')}
                 onClick={() => onTogglePin(conversation)}
               >
                 {conversation.pinned ? <PinOff /> : <Pin />}
@@ -108,7 +115,7 @@ export function ChatConversationSidebar({
               <Button
                 variant="ghost"
                 size="icon-xs"
-                aria-label={conversation.status === 'active' ? 'Archive conversation' : 'Restore conversation'}
+                aria-label={conversation.status === 'active' ? t('chat.sidebar.archive') : t('chat.sidebar.restore')}
                 onClick={() => onToggleArchive(conversation)}
               >
                 {conversation.status === 'active' ? <Archive /> : <RotateCcw />}
@@ -116,7 +123,7 @@ export function ChatConversationSidebar({
               <Button
                 variant="ghost"
                 size="icon-xs"
-                aria-label="Delete conversation"
+                aria-label={t('chat.sidebar.delete')}
                 onClick={() => onDelete(conversation.id)}
               >
                 <Trash2 />
