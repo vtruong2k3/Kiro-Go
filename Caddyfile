@@ -1,6 +1,6 @@
 # Kiro-Go API Gateway — https://api.botlease.click
 api.botlease.click {
-    reverse_proxy 127.0.0.1:8080 {
+    reverse_proxy kiro-go:8080 {
         header_up Host {host}
         header_up X-Real-IP {remote_host}
 

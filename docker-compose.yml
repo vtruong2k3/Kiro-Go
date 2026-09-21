@@ -3,7 +3,7 @@ services:
     build: .
     container_name: kiro-go
     ports:
-      - "127.0.0.1:8080:8080"    # chỉ bind localhost, Caddy systemd sẽ proxy vào
+      - "127.0.0.1:8080:8080"    # chỉ bind localhost, Caddy sẽ reverse proxy vào
       - "127.0.0.1:3128:3128"
       - "127.0.0.1:3129:3129"
       - "127.0.0.1:56121:56121"
@@ -16,3 +16,26 @@ services:
       - XAI_CALLBACK_BIND=0.0.0.0
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
     restart: unless-stopped
+    networks:
+      - kiro-net
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: kiro-caddy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy/data:/data
+      - ./caddy/config:/config
+    restart: unless-stopped
+    networks:
+      - kiro-net
+    depends_on:
+      - kiro-go
+
+networks:
+  kiro-net:
+    driver: bridge
